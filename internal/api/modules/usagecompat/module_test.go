@@ -12,9 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/redisqueue"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 )
 
 func TestModuleRegistersUsageCompatibilityRoutes(t *testing.T) {
@@ -39,7 +38,7 @@ func TestModuleRegistersUsageCompatibilityRoutes(t *testing.T) {
 	module := New(NewHandler(stats, controller))
 
 	router := gin.New()
-	if err := module.Register(modules.Context{Engine: router, Config: cfg}); err != nil {
+	if err := module.Register(router); err != nil {
 		t.Fatalf("register module: %v", err)
 	}
 
@@ -117,7 +116,7 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 	module := New(NewHandler(stats, nil))
 
 	router := gin.New()
-	if err := module.Register(modules.Context{Engine: router}); err != nil {
+	if err := module.Register(router); err != nil {
 		t.Fatalf("register module: %v", err)
 	}
 

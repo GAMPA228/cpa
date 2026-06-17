@@ -5,8 +5,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
-	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 )
 
 const defaultPathPrefix = "/v0/management"
@@ -55,8 +54,8 @@ func New(handler *Handler, opts ...Option) *Module {
 func (m *Module) Name() string { return "usagecompat" }
 
 // Register mounts the compatibility routes on the supplied Gin engine.
-func (m *Module) Register(ctx modules.Context) error {
-	if ctx.Engine == nil {
+func (m *Module) Register(engine *gin.Engine) error {
+	if engine == nil {
 		return fmt.Errorf("usagecompat: engine is nil")
 	}
 	if m == nil || m.handler == nil {
@@ -67,7 +66,7 @@ func (m *Module) Register(ctx modules.Context) error {
 	if prefix == "" {
 		prefix = defaultPathPrefix
 	}
-	group := ctx.Engine.Group(prefix)
+	group := engine.Group(prefix)
 	if len(m.middleware) > 0 {
 		group.Use(m.middleware...)
 	}
