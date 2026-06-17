@@ -26,6 +26,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
 	ampmodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/amp"
+	usagecompatmodule "github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules/usagecompat"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
@@ -171,6 +172,9 @@ type Server struct {
 	// ampModule is the Amp routing module for model mapping hot-reload
 	ampModule *ampmodule.AmpModule
 
+	// usageCompatModule keeps the deprecated usage management endpoints isolated from core route wiring.
+	usageCompatModule *usagecompatmodule.Module
+
 	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
 	managementRoutesRegistered atomic.Bool
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
@@ -283,6 +287,12 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		s.mgmt.SetPostAuthHook(optionState.postAuthHook)
 	}
 	s.localPassword = optionState.localPassword
+	s.usageCompatModule = usagecompatmodule.New(
+		usagecompatmodule.NewHandler(
+			usagecompatmodule.DefaultStatistics(),
+			usagecompatmodule.NewFileBackedConfigController(cfg, configFilePath),
+		),
+	)
 
 	// Setup routes
 	s.setupRoutes()
@@ -527,10 +537,6 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/error-logs-max-files", s.mgmt.PutErrorLogsMaxFiles)
 		mgmt.PATCH("/error-logs-max-files", s.mgmt.PutErrorLogsMaxFiles)
 
-		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
-		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
-		mgmt.PATCH("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
-
 		mgmt.GET("/proxy-url", s.mgmt.GetProxyURL)
 		mgmt.PUT("/proxy-url", s.mgmt.PutProxyURL)
 		mgmt.PATCH("/proxy-url", s.mgmt.PutProxyURL)
@@ -656,6 +662,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/kimi-auth-url", s.mgmt.RequestKimiToken)
 		mgmt.POST("/oauth-callback", s.mgmt.PostOAuthCallback)
 		mgmt.GET("/get-auth-status", s.mgmt.GetAuthStatus)
+
+		if s.usageCompatModule != nil {
+			s.usageCompatModule.RegisterRoutes(mgmt)
+		}
 	}
 }
 
@@ -1078,6 +1088,11 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 	if s.mgmt != nil {
 		s.mgmt.SetConfig(cfg)
 		s.mgmt.SetAuthManager(s.handlers.AuthManager)
+	}
+	if s.usageCompatModule != nil {
+		if err := s.usageCompatModule.OnConfigUpdated(cfg); err != nil {
+			log.Errorf("failed to update usage compatibility module config: %v", err)
+		}
 	}
 
 	// Notify Amp module only when Amp config has changed.
