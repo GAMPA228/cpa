@@ -4,6 +4,14 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 
 ## Repository
 - GitHub: https://github.com/router-for-me/CLIProxyAPI
+- Related repository map: `docs/repository-map.md`
+
+## Related Frontend
+- Frontend management center local path: `F:\gitRepository\Cli-Proxy-API-Management-Center`
+- Frontend user fork remote: `origin` (`git@github.com:GAMPA228/Cli-Proxy-API-Management-Center.git`)
+- Frontend official remote: `upstream` (`git@github.com:router-for-me/Cli-Proxy-API-Management-Center.git`)
+- When asked to pull official updates, check and preserve local changes first; backend updates come from backend `origin`, frontend updates come from frontend `upstream`.
+- Do not push backend or frontend changes unless the user explicitly asks.
 
 ## Commands
 ```bash

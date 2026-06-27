@@ -29,6 +29,7 @@ auths/*
 
 # Documentation
 docs/*
+!docs/repository-map.md
 AGENTS.md
 CLAUDE.md
 GEMINI.md

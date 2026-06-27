@@ -59,14 +59,14 @@ func TestExampleAPIKeyWarningHandler(t *testing.T) {
 		}
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/management.html", nil)
+	req = httptest.NewRequest(http.MethodGet, "/management-bak.html", nil)
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("GET /management.html status = %d, want %d", w.Code, http.StatusOK)
+		t.Fatalf("GET /management-bak.html status = %d, want %d", w.Code, http.StatusOK)
 	}
 	if body := w.Body.String(); !strings.Contains(body, "Example API key detected") {
-		t.Fatalf("GET /management.html body missing warning: %s", body)
+		t.Fatalf("GET /management-bak.html body missing warning: %s", body)
 	}
 
 	req = httptest.NewRequest(http.MethodHead, "/", nil)
