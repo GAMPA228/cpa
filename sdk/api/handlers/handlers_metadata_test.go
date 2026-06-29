@@ -1,8 +1,11 @@
 package handlers
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"golang.org/x/net/context"
 )
@@ -16,6 +19,20 @@ func TestRequestExecutionMetadataIncludesExecutionSessionWithoutIdempotencyKey(t
 	}
 	if _, ok := meta[idempotencyKeyMetadataKey]; ok {
 		t.Fatalf("unexpected idempotency key in metadata: %v", meta[idempotencyKeyMetadataKey])
+	}
+}
+
+func TestRequestExecutionMetadataIncludesUserAPIKey(t *testing.T) {
+	w := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(w)
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ginCtx.Set("userApiKey", " sk-user ")
+
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+	meta := requestExecutionMetadata(ctx)
+
+	if got := meta[coreexecutor.UserAPIKeyMetadataKey]; got != "sk-user" {
+		t.Fatalf("UserAPIKeyMetadataKey = %v, want %q", got, "sk-user")
 	}
 }
 

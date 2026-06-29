@@ -117,6 +117,9 @@ type Config struct {
 	// Codex configures provider-wide Codex request behavior.
 	Codex CodexConfig `yaml:"codex" json:"codex"`
 
+	// ThinkingPolicy configures server-side reasoning effort enforcement.
+	ThinkingPolicy ThinkingPolicyConfig `yaml:"thinking-policy" json:"thinking-policy"`
+
 	// CodexHeaderDefaults configures fallback headers for Codex OAuth model requests.
 	// These are used only when the client does not send its own headers.
 	CodexHeaderDefaults CodexHeaderDefaults `yaml:"codex-header-defaults" json:"codex-header-defaults"`
@@ -267,6 +270,18 @@ type CodexHeaderDefaults struct {
 // CodexConfig configures provider-wide Codex request behavior.
 type CodexConfig struct {
 	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
+}
+
+// ThinkingPolicyConfig configures server-side reasoning effort enforcement.
+type ThinkingPolicyConfig struct {
+	Codex CodexThinkingPolicyConfig `yaml:"codex" json:"codex"`
+}
+
+// CodexThinkingPolicyConfig controls Codex reasoning effort by downstream API key.
+type CodexThinkingPolicyConfig struct {
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	DefaultEffort string   `yaml:"default-effort" json:"default-effort"`
+	XHighAPIKeys  []string `yaml:"xhigh-api-keys" json:"xhigh-api-keys"`
 }
 
 // TLSConfig holds HTTPS server settings.
@@ -770,6 +785,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Normalize global OAuth model name aliases.
 	cfg.SanitizeOAuthModelAlias()
 
+	// Normalize server-side thinking policy.
+	cfg.SanitizeThinkingPolicy()
+
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
 
@@ -809,6 +827,42 @@ func (cfg *Config) SanitizePayloadRules() {
 	}
 	cfg.Payload.DefaultRaw = sanitizePayloadRawRules(cfg.Payload.DefaultRaw, "default-raw")
 	cfg.Payload.OverrideRaw = sanitizePayloadRawRules(cfg.Payload.OverrideRaw, "override-raw")
+}
+
+// SanitizeThinkingPolicy normalizes server-side thinking policy settings.
+func (cfg *Config) SanitizeThinkingPolicy() {
+	if cfg == nil {
+		return
+	}
+	policy := &cfg.ThinkingPolicy.Codex
+	policy.DefaultEffort = normalizeCodexThinkingPolicyDefaultEffort(policy.DefaultEffort)
+	if len(policy.XHighAPIKeys) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(policy.XHighAPIKeys))
+	keys := make([]string, 0, len(policy.XHighAPIKeys))
+	for _, apiKey := range policy.XHighAPIKeys {
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			continue
+		}
+		if _, ok := seen[apiKey]; ok {
+			continue
+		}
+		seen[apiKey] = struct{}{}
+		keys = append(keys, apiKey)
+	}
+	policy.XHighAPIKeys = keys
+}
+
+func normalizeCodexThinkingPolicyDefaultEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "", "high":
+		return "high"
+	default:
+		log.WithField("effort", effort).Warn("unsupported codex thinking policy default effort; falling back to high")
+		return "high"
+	}
 }
 
 func sanitizePayloadRawRules(rules []PayloadRule, section string) []PayloadRule {

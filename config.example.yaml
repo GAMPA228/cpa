@@ -170,6 +170,15 @@ codex:
   # as evidence for TOS enforcement bans; this option only satisfies those odd concerns.
   identity-confuse: false
 
+# Server-side thinking policy. When enabled, Codex requests without explicit
+# effort default to high, while explicit low/medium/high values are preserved.
+# Only listed downstream API keys may keep xhigh when they explicitly request it.
+thinking-policy:
+  codex:
+    enabled: false
+    default-effort: "high"
+    xhigh-api-keys: []
+
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: true
 

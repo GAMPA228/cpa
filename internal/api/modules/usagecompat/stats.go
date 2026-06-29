@@ -69,12 +69,13 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp, latency, and token usage for a single request.
 type RequestDetail struct {
-	Timestamp time.Time  `json:"timestamp"`
-	LatencyMs int64      `json:"latency_ms"`
-	Source    string     `json:"source"`
-	AuthIndex string     `json:"auth_index"`
-	Tokens    TokenStats `json:"tokens"`
-	Failed    bool       `json:"failed"`
+	Timestamp       time.Time  `json:"timestamp"`
+	LatencyMs       int64      `json:"latency_ms"`
+	Source          string     `json:"source"`
+	AuthIndex       string     `json:"auth_index"`
+	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
+	Tokens          TokenStats `json:"tokens"`
+	Failed          bool       `json:"failed"`
 }
 
 // TokenStats captures the token usage breakdown for a request.
@@ -125,15 +126,16 @@ type MergeResult struct {
 
 // UsageDetailRow is a paginated request detail with its API and model identifiers.
 type UsageDetailRow struct {
-	ID        int64      `json:"id"`
-	API       string     `json:"api"`
-	Model     string     `json:"model"`
-	Timestamp time.Time  `json:"timestamp"`
-	LatencyMs int64      `json:"latency_ms"`
-	Source    string     `json:"source"`
-	AuthIndex string     `json:"auth_index"`
-	Tokens    TokenStats `json:"tokens"`
-	Failed    bool       `json:"failed"`
+	ID              int64      `json:"id"`
+	API             string     `json:"api"`
+	Model           string     `json:"model"`
+	Timestamp       time.Time  `json:"timestamp"`
+	LatencyMs       int64      `json:"latency_ms"`
+	Source          string     `json:"source"`
+	AuthIndex       string     `json:"auth_index"`
+	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
+	Tokens          TokenStats `json:"tokens"`
+	Failed          bool       `json:"failed"`
 }
 
 // DetailPageQuery describes a paginated detail lookup.
@@ -173,13 +175,13 @@ type AggregateSnapshot struct {
 	TotalTokens   int64      `json:"total_tokens"`
 	Tokens        TokenStats `json:"tokens"`
 
-	APIs    map[string]AggregateAPI   `json:"apis"`
-	Models  map[string]AggregateModel `json:"models"`
-	Hourly  []AggregateBucket         `json:"hourly"`
-	Daily   []AggregateBucket         `json:"daily"`
-	Range   string                    `json:"range"`
-	Since   *time.Time                `json:"since,omitempty"`
-	Until   *time.Time                `json:"until,omitempty"`
+	APIs   map[string]AggregateAPI   `json:"apis"`
+	Models map[string]AggregateModel `json:"models"`
+	Hourly []AggregateBucket         `json:"hourly"`
+	Daily  []AggregateBucket         `json:"daily"`
+	Range  string                    `json:"range"`
+	Since  *time.Time                `json:"since,omitempty"`
+	Until  *time.Time                `json:"until,omitempty"`
 }
 
 // AggregateAPI contains compact statistics for an API identifier.
@@ -279,12 +281,13 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	hourKey := timestamp.Hour()
 
 	requestDetail := RequestDetail{
-		Timestamp: timestamp,
-		LatencyMs: normalizeLatency(record.Latency),
-		Source:    record.Source,
-		AuthIndex: record.AuthIndex,
-		Tokens:    detail,
-		Failed:    failed,
+		Timestamp:       timestamp,
+		LatencyMs:       normalizeLatency(record.Latency),
+		Source:          record.Source,
+		AuthIndex:       record.AuthIndex,
+		ReasoningEffort: strings.TrimSpace(record.ReasoningEffort),
+		Tokens:          detail,
+		Failed:          failed,
 	}
 
 	s.mu.Lock()

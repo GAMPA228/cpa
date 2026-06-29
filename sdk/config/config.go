@@ -18,6 +18,8 @@ type PayloadConfig = internalconfig.PayloadConfig
 type PayloadRule = internalconfig.PayloadRule
 type PayloadFilterRule = internalconfig.PayloadFilterRule
 type PayloadModelRule = internalconfig.PayloadModelRule
+type ThinkingPolicyConfig = internalconfig.ThinkingPolicyConfig
+type CodexThinkingPolicyConfig = internalconfig.CodexThinkingPolicyConfig
 
 type GeminiKey = internalconfig.GeminiKey
 type CodexKey = internalconfig.CodexKey

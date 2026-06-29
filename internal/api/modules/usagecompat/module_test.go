@@ -128,11 +128,16 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 			source = "other-source"
 			authIndex = "1"
 		}
+		reasoningEffort := "high"
+		if i == 1 {
+			reasoningEffort = "xhigh"
+		}
 		details = append(details, map[string]any{
-			"timestamp":  time.Date(2026, 5, 8, i, 0, 0, 0, time.UTC).Format(time.RFC3339),
-			"latency_ms": 10 + i,
-			"source":     source,
-			"auth_index": authIndex,
+			"timestamp":        time.Date(2026, 5, 8, i, 0, 0, 0, time.UTC).Format(time.RFC3339),
+			"latency_ms":       10 + i,
+			"source":           source,
+			"auth_index":       authIndex,
+			"reasoning_effort": reasoningEffort,
 			"tokens": map[string]any{
 				"input_tokens":  1,
 				"output_tokens": 2,
@@ -211,6 +216,13 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 	if got := int64(getJSONNumber(t, filteredDetailPage["total"])); got != 1 {
 		t.Fatalf("filtered detail page total = %d, want 1", got)
 	}
+	filteredItem, ok := filteredItems[0].(map[string]any)
+	if !ok {
+		t.Fatalf("filtered detail item = %#v, want object", filteredItems[0])
+	}
+	if got, ok := filteredItem["reasoning_effort"].(string); !ok || got != "xhigh" {
+		t.Fatalf("filtered detail reasoning_effort = %#v, want xhigh", filteredItem["reasoning_effort"])
+	}
 
 	aggregate := performJSONRequest(t, router, http.MethodGet, "/v0/management/usage/aggregate?range=all", nil)
 	if got := int64(getJSONNumber(t, aggregate["total_requests"])); got != 3 {
@@ -268,7 +280,13 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 func newTestRequestStatistics(t *testing.T) *RequestStatistics {
 	t.Helper()
 	t.Setenv(usageSQLitePathEnv, filepath.Join(t.TempDir(), "usage.sqlite3"))
-	return NewRequestStatistics()
+	stats := NewRequestStatistics()
+	t.Cleanup(func() {
+		if stats != nil && stats.detailStore != nil && stats.detailStore.db != nil {
+			_ = stats.detailStore.db.Close()
+		}
+	})
+	return stats
 }
 
 func performJSONRequest(t *testing.T, handler http.Handler, method, path string, body any) map[string]any {

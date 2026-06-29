@@ -13,14 +13,14 @@ import (
 )
 
 const (
-	usageSQLitePathEnv      = "USAGECOMPAT_SQLITE_PATH"
-	defaultUsageSQLitePath  = "usagecompat.sqlite3"
-	defaultDetailPageSize   = 100
-	maxDetailPageSize       = 1000
-	sqliteFailedTrue        = 1
-	sqliteFailedFalse       = 0
-	hourBucketNanoseconds   = int64(time.Hour)
-	dayBucketNanoseconds    = int64(24 * time.Hour)
+	usageSQLitePathEnv     = "USAGECOMPAT_SQLITE_PATH"
+	defaultUsageSQLitePath = "usagecompat.sqlite3"
+	defaultDetailPageSize  = 100
+	maxDetailPageSize      = 1000
+	sqliteFailedTrue       = 1
+	sqliteFailedFalse      = 0
+	hourBucketNanoseconds  = int64(time.Hour)
+	dayBucketNanoseconds   = int64(24 * time.Hour)
 )
 
 type sqliteDetailStore struct {
@@ -75,6 +75,7 @@ func (s *sqliteDetailStore) init() error {
 			latency_ms INTEGER NOT NULL,
 			source TEXT NOT NULL,
 			auth_index TEXT NOT NULL,
+			reasoning_effort TEXT NOT NULL DEFAULT '',
 			input_tokens INTEGER NOT NULL,
 			output_tokens INTEGER NOT NULL,
 			reasoning_tokens INTEGER NOT NULL,
@@ -83,11 +84,15 @@ func (s *sqliteDetailStore) init() error {
 			failed INTEGER NOT NULL,
 			dedup_key TEXT NOT NULL UNIQUE
 		)`,
+		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS usage_details_api_model_time_idx ON usage_details(api_name, model_name, timestamp_ns DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS usage_details_time_idx ON usage_details(timestamp_ns DESC, id DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
+			if strings.Contains(statement, "ADD COLUMN reasoning_effort") && strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+				continue
+			}
 			return fmt.Errorf("sqlite init statement failed: %w", err)
 		}
 	}
@@ -106,16 +111,17 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO usage_details (
-			api_name, model_name, timestamp_ns, latency_ms, source, auth_index,
+			api_name, model_name, timestamp_ns, latency_ms, source, auth_index, reasoning_effort,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
 			failed, dedup_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
 		detail.LatencyMs,
 		detail.Source,
 		detail.AuthIndex,
+		detail.ReasoningEffort,
 		tokens.InputTokens,
 		tokens.OutputTokens,
 		tokens.ReasoningTokens,
@@ -206,7 +212,7 @@ func (s *sqliteDetailStore) ForEach(fn func(apiName, modelName string, detail Re
 		return nil
 	}
 	rows, err := s.db.Query(
-		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, source, auth_index,
+		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, source, auth_index, reasoning_effort,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
 		FROM usage_details
 		ORDER BY timestamp_ns ASC, id ASC`,
@@ -368,7 +374,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 	if newestFirst {
 		order = "ORDER BY timestamp_ns DESC, id DESC"
 	}
-	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, source, auth_index,
+	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, source, auth_index, reasoning_effort,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
 		FROM usage_details ` + where + " " + order
 	if limit >= 0 {
@@ -489,6 +495,7 @@ func scanDetailRow(rows interface {
 		&row.LatencyMs,
 		&row.Source,
 		&row.AuthIndex,
+		&row.ReasoningEffort,
 		&row.Tokens.InputTokens,
 		&row.Tokens.OutputTokens,
 		&row.Tokens.ReasoningTokens,
@@ -515,27 +522,29 @@ func rowsToDetails(rows []UsageDetailRow) []RequestDetail {
 
 func detailFromRow(row UsageDetailRow) RequestDetail {
 	return RequestDetail{
-		Timestamp: row.Timestamp,
-		LatencyMs: row.LatencyMs,
-		Source:    row.Source,
-		AuthIndex: row.AuthIndex,
-		Tokens:    row.Tokens,
-		Failed:    row.Failed,
+		Timestamp:       row.Timestamp,
+		LatencyMs:       row.LatencyMs,
+		Source:          row.Source,
+		AuthIndex:       row.AuthIndex,
+		ReasoningEffort: row.ReasoningEffort,
+		Tokens:          row.Tokens,
+		Failed:          row.Failed,
 	}
 }
 
 func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDetail) UsageDetailRow {
 	detail = normalizeRequestDetail(detail)
 	return UsageDetailRow{
-		ID:        id,
-		API:       apiName,
-		Model:     modelName,
-		Timestamp: detail.Timestamp,
-		LatencyMs: detail.LatencyMs,
-		Source:    detail.Source,
-		AuthIndex: detail.AuthIndex,
-		Tokens:    detail.Tokens,
-		Failed:    detail.Failed,
+		ID:              id,
+		API:             apiName,
+		Model:           modelName,
+		Timestamp:       detail.Timestamp,
+		LatencyMs:       detail.LatencyMs,
+		Source:          detail.Source,
+		AuthIndex:       detail.AuthIndex,
+		ReasoningEffort: detail.ReasoningEffort,
+		Tokens:          detail.Tokens,
+		Failed:          detail.Failed,
 	}
 }
 
