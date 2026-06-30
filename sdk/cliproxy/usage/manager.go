@@ -167,6 +167,7 @@ type Manager struct {
 	once     sync.Once
 	stopOnce sync.Once
 	cancel   context.CancelFunc
+	done     chan struct{}
 
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -196,7 +197,14 @@ func (m *Manager) Start(ctx context.Context) {
 		}
 		var workerCtx context.Context
 		workerCtx, m.cancel = context.WithCancel(ctx)
-		go m.run(workerCtx)
+		m.mu.Lock()
+		m.done = make(chan struct{})
+		done := m.done
+		m.mu.Unlock()
+		go func() {
+			defer close(done)
+			m.run(workerCtx)
+		}()
 	})
 }
 
@@ -211,8 +219,12 @@ func (m *Manager) Stop() {
 		}
 		m.mu.Lock()
 		m.closed = true
+		done := m.done
 		m.mu.Unlock()
 		m.cond.Broadcast()
+		if done != nil {
+			<-done
+		}
 	})
 }
 

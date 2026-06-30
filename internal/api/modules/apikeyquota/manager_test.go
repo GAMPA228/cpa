@@ -1,0 +1,183 @@
+package apikeyquota
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+)
+
+func TestManagerCheckRejectsAfterDailyLimitReached(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-test", DailyTokenLimit: 100},
+		}}},
+		store: store,
+		loc:   time.UTC,
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+
+	allowed, err := manager.Check("sk-test", now)
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if !allowed.Allowed || allowed.UsedTokens != 0 || allowed.RemainingTokens != 100 {
+		t.Fatalf("initial decision = %#v, want allowed with 100 remaining", allowed)
+	}
+
+	manager.HandleUsage(context.Background(), coreusage.Record{
+		APIKey:      "sk-test",
+		RequestedAt: now,
+		Detail:      coreusage.Detail{TotalTokens: 120},
+	})
+
+	blocked, err := manager.Check("sk-test", now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("Check() after usage error = %v", err)
+	}
+	if blocked.Allowed {
+		t.Fatalf("blocked decision allowed = true, want false: %#v", blocked)
+	}
+	if blocked.UsedTokens != 120 || blocked.RemainingTokens != 0 {
+		t.Fatalf("blocked usage = used %d remaining %d, want 120/0", blocked.UsedTokens, blocked.RemainingTokens)
+	}
+}
+
+func TestManagerStatusesIncludeConfiguredKeysAndResetNextDay(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-limited", Remark: "Alice", DailyTokenLimit: 100},
+			{APIKey: "sk-unlimited", Remark: "Bob"},
+		}}},
+		store: store,
+		loc:   time.UTC,
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 6, 30, 23, 30, 0, 0, time.UTC)
+	manager.HandleUsage(context.Background(), coreusage.Record{
+		APIKey:      "sk-limited",
+		RequestedAt: now,
+		Detail:      coreusage.Detail{InputTokens: 40, OutputTokens: 20},
+	})
+
+	statuses, err := manager.Statuses(now)
+	if err != nil {
+		t.Fatalf("Statuses() error = %v", err)
+	}
+	if len(statuses) != 2 {
+		t.Fatalf("statuses len = %d, want 2: %#v", len(statuses), statuses)
+	}
+	limited := statuses[0]
+	if limited.APIKey != "sk-limited" || limited.Remark != "Alice" || limited.UsedTokens != 60 || limited.RemainingTokens != 40 {
+		t.Fatalf("limited status = %#v, want Alice used 60 remaining 40", limited)
+	}
+	wantReset := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	if !limited.ResetAt.Equal(wantReset) {
+		t.Fatalf("reset at = %s, want %s", limited.ResetAt, wantReset)
+	}
+	if statuses[1].Limited || statuses[1].RemainingTokens != 0 {
+		t.Fatalf("unlimited status = %#v, want unlimited", statuses[1])
+	}
+}
+
+func TestManagerUsageStaysInMemoryUntilFlush(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-test", DailyTokenLimit: 100},
+		}}},
+		store: store,
+		loc:   time.UTC,
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+
+	manager.HandleUsage(context.Background(), coreusage.Record{
+		APIKey:      "sk-test",
+		RequestedAt: now,
+		Detail:      coreusage.Detail{TotalTokens: 75},
+	})
+
+	decision, err := manager.Check("sk-test", now)
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if decision.UsedTokens != 75 || decision.RemainingTokens != 25 {
+		t.Fatalf("in-memory decision = %#v, want used 75 remaining 25", decision)
+	}
+
+	storedBeforeFlush, err := store.Get(hashAPIKey("sk-test"), "2026-06-30")
+	if err != nil {
+		t.Fatalf("store.Get() before flush error = %v", err)
+	}
+	if storedBeforeFlush.UsedTokens != 0 || storedBeforeFlush.RequestCount != 0 {
+		t.Fatalf("stored before flush = %#v, want zero", storedBeforeFlush)
+	}
+
+	if err := manager.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	storedAfterFlush, err := store.Get(hashAPIKey("sk-test"), "2026-06-30")
+	if err != nil {
+		t.Fatalf("store.Get() after flush error = %v", err)
+	}
+	if storedAfterFlush.UsedTokens != 75 || storedAfterFlush.RequestCount != 1 {
+		t.Fatalf("stored after flush = %#v, want 75 tokens and 1 request", storedAfterFlush)
+	}
+}
+
+func TestManagerLookupReturnsSingleAPIKeyStatus(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-target", Remark: "Alice", DailyTokenLimit: 100},
+			{APIKey: "sk-other", Remark: "Bob", DailyTokenLimit: 200},
+		}}},
+		store: store,
+		loc:   time.UTC,
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+	manager.HandleUsage(context.Background(), coreusage.Record{
+		APIKey:      "sk-target",
+		RequestedAt: now,
+		Detail:      coreusage.Detail{TotalTokens: 40},
+	})
+
+	status, found, err := manager.Lookup("sk-target", now)
+	if err != nil {
+		t.Fatalf("Lookup() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("Lookup() found = false, want true")
+	}
+	if status.APIKey != "sk-target" || status.Remark != "Alice" || status.UsedTokens != 40 || status.RemainingTokens != 60 {
+		t.Fatalf("Lookup() status = %#v, want target/Alice/40/60", status)
+	}
+
+	_, found, err = manager.Lookup("sk-missing", now)
+	if err != nil {
+		t.Fatalf("Lookup() missing error = %v", err)
+	}
+	if found {
+		t.Fatalf("Lookup() missing found = true, want false")
+	}
+}

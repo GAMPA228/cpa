@@ -144,6 +144,25 @@ func TestShouldCaptureRequestBody(t *testing.T) {
 	}
 }
 
+func TestShouldLogRequestSkipsSensitivePublicEndpoints(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		{path: "/v1/chat/completions", want: true},
+		{path: "/v0/management/config", want: false},
+		{path: "/management.html", want: false},
+		{path: "/v0/api-key-usage", want: false},
+		{path: "/api-key-usage.html", want: false},
+	}
+
+	for _, tt := range tests {
+		if got := shouldLogRequest(tt.path); got != tt.want {
+			t.Fatalf("shouldLogRequest(%q) = %t, want %t", tt.path, got, tt.want)
+		}
+	}
+}
+
 func TestAttachRequestLogSourcesUsesLoggerLogsDir(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

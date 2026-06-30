@@ -1673,6 +1673,14 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		}
 
 		usage.StopDefault()
+		if s.server != nil {
+			if err := s.server.CloseAPIKeyQuotaManager(); err != nil {
+				log.Errorf("failed to close api key quota manager: %v", err)
+				if shutdownErr == nil {
+					shutdownErr = err
+				}
+			}
+		}
 	})
 	return shutdownErr
 }

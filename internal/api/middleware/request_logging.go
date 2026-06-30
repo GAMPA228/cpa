@@ -234,10 +234,13 @@ func decodeCapturedZstdRequestBody(raw []byte) ([]byte, error) {
 }
 
 // shouldLogRequest determines whether the request should be logged.
-// It skips management endpoints to avoid leaking secrets but allows
-// all other routes, including module-provided ones, to honor request-log.
+// It skips endpoints that carry management keys or downstream API keys.
 func shouldLogRequest(path string) bool {
 	if strings.HasPrefix(path, "/v0/management") || strings.HasPrefix(path, "/management") {
+		return false
+	}
+	cleanPath := strings.TrimRight(path, "/")
+	if cleanPath == "/v0/api-key-usage" || cleanPath == "/api-key-usage.html" {
 		return false
 	}
 

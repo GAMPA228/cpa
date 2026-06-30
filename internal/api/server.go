@@ -25,6 +25,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
+	apikeyquotamodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/apikeyquota"
 	usagecompatmodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/usagecompat"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
@@ -41,6 +42,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers/openai"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/net/http2"
 	"gopkg.in/yaml.v3"
@@ -226,6 +228,9 @@ type Server struct {
 	// usageCompatModule keeps the deprecated usage management endpoints isolated from core route wiring.
 	usageCompatModule *usagecompatmodule.Module
 
+	// apiKeyQuotaManager enforces daily downstream API key token quotas.
+	apiKeyQuotaManager *apikeyquotamodule.Manager
+
 	// managementRoutesRegistered tracks whether the management routes have been attached to the engine.
 	managementRoutesRegistered atomic.Bool
 	// managementRoutesEnabled controls whether management endpoints serve real handlers.
@@ -355,6 +360,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 			usagecompatmodule.NewFileBackedConfigController(cfg, configFilePath),
 		),
 	)
+	s.apiKeyQuotaManager = apikeyquotamodule.NewManager(cfg)
+	coreusage.RegisterNamedPlugin("api-key-quota", s.apiKeyQuotaManager)
+	s.mgmt.SetAPIKeyQuotaManager(s.apiKeyQuotaManager)
 
 	// Home heartbeat gate: when home is enabled, block all endpoints with 503 until the
 	// subscribe-config heartbeat connection is healthy.
@@ -400,7 +408,7 @@ func (s *Server) homeHeartbeatMiddleware() gin.HandlerFunc {
 		}
 		if c != nil && c.Request != nil {
 			path := c.Request.URL.Path
-			if strings.HasPrefix(path, "/v0/management/") || path == "/v0/management" || strings.HasPrefix(path, "/v0/resource/plugins/") || path == "/management.html" {
+			if strings.HasPrefix(path, "/v0/management/") || path == "/v0/management" || strings.HasPrefix(path, "/v0/resource/plugins/") || strings.HasPrefix(path, "/management") {
 				c.Next()
 				return
 			}
@@ -429,6 +437,8 @@ func (s *Server) setupRoutes() {
 	s.engine.HEAD("/healthz", healthzHandler)
 
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
+	s.engine.GET(apiKeyUsagePagePath, s.serveAPIKeyUsagePage)
+	s.engine.POST(publicAPIKeyUsagePath, s.lookupPublicAPIKeyUsage)
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
@@ -437,7 +447,7 @@ func (s *Server) setupRoutes() {
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
-	v1.Use(AuthMiddleware(s.accessManager))
+	v1.Use(AuthMiddleware(s.accessManager), s.apiKeyQuotaMiddleware())
 	{
 		v1.GET("/models", s.unifiedModelsHandler(openaiHandlers, claudeCodeHandlers))
 		v1.POST("/chat/completions", openaiHandlers.ChatCompletions)
@@ -457,7 +467,7 @@ func (s *Server) setupRoutes() {
 	}
 
 	openaiV1 := s.engine.Group("/openai/v1")
-	openaiV1.Use(AuthMiddleware(s.accessManager))
+	openaiV1.Use(AuthMiddleware(s.accessManager), s.apiKeyQuotaMiddleware())
 	{
 		openaiV1.POST("/videos", openaiHandlers.VideosCreate)
 		openaiV1.GET("/videos/:video_id/content", openaiHandlers.VideosContent)
@@ -466,7 +476,7 @@ func (s *Server) setupRoutes() {
 
 	// Codex CLI direct route aliases (chatgpt_base_url compatible)
 	codexDirect := s.engine.Group("/backend-api/codex")
-	codexDirect.Use(AuthMiddleware(s.accessManager))
+	codexDirect.Use(AuthMiddleware(s.accessManager), s.apiKeyQuotaMiddleware())
 	{
 		codexDirect.GET("/responses", openaiResponsesHandlers.ResponsesWebsocket)
 		codexDirect.POST("/responses", openaiResponsesHandlers.Responses)
@@ -475,7 +485,7 @@ func (s *Server) setupRoutes() {
 
 	// Gemini compatible API routes
 	v1beta := s.engine.Group("/v1beta")
-	v1beta.Use(AuthMiddleware(s.accessManager))
+	v1beta.Use(AuthMiddleware(s.accessManager), s.apiKeyQuotaMiddleware())
 	{
 		v1beta.GET("/models", s.geminiModelsHandler(geminiHandlers))
 		v1beta.POST("/models/*action", geminiHandlers.GeminiHandler)
@@ -669,6 +679,9 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/api-keys", s.mgmt.PutAPIKeys)
 		mgmt.PATCH("/api-keys", s.mgmt.PatchAPIKeys)
 		mgmt.DELETE("/api-keys", s.mgmt.DeleteAPIKeys)
+		mgmt.GET("/api-key-quotas", s.mgmt.GetAPIKeyQuotas)
+		mgmt.PUT("/api-key-quotas", s.mgmt.PutAPIKeyQuotas)
+		mgmt.PATCH("/api-key-quotas", s.mgmt.PutAPIKeyQuotas)
 		mgmt.GET("/api-key-usage", s.mgmt.GetAPIKeyUsage)
 		mgmt.GET("/usage-queue", s.mgmt.GetUsageQueue)
 
@@ -1516,9 +1529,22 @@ func (s *Server) Stop(ctx context.Context) error {
 	if err := s.server.Shutdown(ctx); err != nil {
 		return fmt.Errorf("failed to shutdown HTTP server: %v", err)
 	}
+	if s.apiKeyQuotaManager != nil {
+		if err := s.apiKeyQuotaManager.Flush(); err != nil {
+			log.Warnf("failed to flush api key quota usage: %v", err)
+		}
+	}
 
 	log.Debug("API server stopped")
 	return nil
+}
+
+// CloseAPIKeyQuotaManager flushes and closes the API key quota persistence layer.
+func (s *Server) CloseAPIKeyQuotaManager() error {
+	if s == nil || s.apiKeyQuotaManager == nil {
+		return nil
+	}
+	return s.apiKeyQuotaManager.Close()
 }
 
 // corsMiddleware returns a Gin middleware handler that adds CORS headers
@@ -1682,6 +1708,9 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			log.Errorf("failed to update usage compatibility module config: %v", err)
 		}
 	}
+	if s.apiKeyQuotaManager != nil {
+		s.apiKeyQuotaManager.SetConfig(cfg)
+	}
 	s.refreshPluginManagementRoutes()
 
 	// Count client sources from configuration and auth store.
@@ -1756,6 +1785,52 @@ func AuthMiddleware(manager *sdkaccess.Manager) gin.HandlerFunc {
 		}
 		c.AbortWithStatusJSON(statusCode, gin.H{"error": err.Message})
 	}
+}
+
+func (s *Server) apiKeyQuotaMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s == nil || s.apiKeyQuotaManager == nil || skipAPIKeyQuotaCheck(c) {
+			c.Next()
+			return
+		}
+		rawAPIKey, exists := c.Get("userApiKey")
+		if !exists {
+			c.Next()
+			return
+		}
+		apiKey, ok := rawAPIKey.(string)
+		if !ok {
+			apiKey = fmt.Sprintf("%v", rawAPIKey)
+		}
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			c.Next()
+			return
+		}
+		decision, err := s.apiKeyQuotaManager.Check(apiKey, time.Now())
+		if err != nil {
+			log.WithError(err).Warn("api key quota check failed")
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "api key quota unavailable"})
+			return
+		}
+		if decision.Allowed {
+			c.Next()
+			return
+		}
+
+		body := handlers.BuildErrorResponseBody(http.StatusTooManyRequests, "出错了, 请联系管理员")
+		c.Data(http.StatusTooManyRequests, "application/json; charset=utf-8", body)
+		c.Abort()
+	}
+}
+
+func skipAPIKeyQuotaCheck(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return true
+	}
+	path := strings.TrimSpace(c.Request.URL.Path)
+	method := strings.ToUpper(strings.TrimSpace(c.Request.Method))
+	return method == http.MethodGet && (path == "/v1/models" || path == "/v1beta/models")
 }
 
 func configuredSignatureCacheEnabled(cfg *config.Config) bool {

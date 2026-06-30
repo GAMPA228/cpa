@@ -36,10 +36,12 @@ remote-management:
 auth-dir: "~/.cli-proxy-api"
 
 # API keys for authentication. Entries may be plain strings or objects with a remark.
+# daily-token-limit is a per-day downstream token cap; 0 or omitted means unlimited.
 api-keys:
   - "your-api-key-1"
   - api-key: "your-api-key-2"
     remark: "Alice"
+    daily-token-limit: 100000000
   - "your-api-key-3"
 
 # OpenAI-compatible model rewrite rules. All models remain visible in /models.
