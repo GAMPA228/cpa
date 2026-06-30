@@ -45,8 +45,14 @@ type SDKConfig struct {
 	// RequestLog enables or disables detailed request logging functionality.
 	RequestLog bool `yaml:"request-log" json:"request-log"`
 
-	// APIKeys is a list of keys for authenticating clients to this proxy server.
-	APIKeys []string `yaml:"api-keys" json:"api-keys"`
+	// APIKeys is a normalized list of keys for authenticating clients to this proxy server.
+	APIKeys []string `yaml:"-" json:"api-keys"`
+
+	// APIKeyEntries stores optional management metadata for downstream API keys.
+	APIKeyEntries APIKeyEntryList `yaml:"api-keys,omitempty" json:"api-key-entries,omitempty"`
+
+	// ModelRewrite configures downstream API key based OpenAI-compatible model rewrites.
+	ModelRewrite ModelRewriteConfig `yaml:"model-rewrite" json:"model-rewrite"`
 
 	// PassthroughHeaders controls whether upstream response headers are forwarded to downstream clients.
 	// Default is false (disabled).
@@ -58,6 +64,23 @@ type SDKConfig struct {
 	// NonStreamKeepAliveInterval controls how often blank lines are emitted for non-streaming responses.
 	// <= 0 disables keep-alives. Value is in seconds.
 	NonStreamKeepAliveInterval int `yaml:"nonstream-keepalive-interval,omitempty" json:"nonstream-keepalive-interval,omitempty"`
+}
+
+// ModelRewriteConfig controls model downgrade/alias rules by downstream API key.
+type ModelRewriteConfig struct {
+	// Enabled toggles model rewrite rules.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Rules are evaluated in order. The first matching rule wins.
+	Rules []ModelRewriteRule `yaml:"rules" json:"rules"`
+}
+
+// ModelRewriteRule rewrites matching models to TargetModel unless the downstream
+// API key is listed in BypassAPIKeys.
+type ModelRewriteRule struct {
+	MatchModels   []string `yaml:"match-models" json:"match-models"`
+	TargetModel   string   `yaml:"target-model" json:"target-model"`
+	BypassAPIKeys []string `yaml:"bypass-api-keys" json:"bypass-api-keys"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

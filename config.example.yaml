@@ -35,11 +35,29 @@ remote-management:
 # Authentication directory (supports ~ for home directory)
 auth-dir: "~/.cli-proxy-api"
 
-# API keys for authentication
+# API keys for authentication. Entries may be plain strings or objects with a remark.
 api-keys:
   - "your-api-key-1"
-  - "your-api-key-2"
+  - api-key: "your-api-key-2"
+    remark: "Alice"
   - "your-api-key-3"
+
+# OpenAI-compatible model rewrite rules. All models remain visible in /models.
+# Matching requests are rewritten to target-model unless the downstream API key
+# is listed in bypass-api-keys. Rules are evaluated in order; first match wins.
+# match-models supports * and ? wildcards.
+model-rewrite:
+  enabled: false
+  rules:
+    # - match-models:
+    #     - "gpt-5.5"
+    #   target-model: "gpt-5.4"
+    #   bypass-api-keys:
+    #     - "your-whitelisted-api-key"
+    # - match-models:
+    #     - "gpt-5.6"
+    #   target-model: "gpt-5.4"
+    #   bypass-api-keys: []
 
 # Enable debug logging
 debug: false

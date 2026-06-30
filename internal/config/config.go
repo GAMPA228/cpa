@@ -758,6 +758,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	cfg.NormalizePluginsConfig()
 
+	// Normalize downstream API keys while preserving optional management remarks.
+	cfg.SanitizeAPIKeyEntries()
+
 	// Sanitize Gemini API key configuration and migrate legacy entries.
 	cfg.SanitizeGeminiKeys()
 
@@ -787,6 +790,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 
 	// Normalize server-side thinking policy.
 	cfg.SanitizeThinkingPolicy()
+
+	// Normalize downstream API key based model rewrite rules.
+	cfg.SanitizeModelRewrite()
 
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
@@ -1160,6 +1166,9 @@ func hashSecret(secret string) (string, error) {
 // and key ordering by loading the original file into a yaml.Node tree and updating values in-place.
 func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 	persistCfg := cfg
+	if persistCfg != nil {
+		persistCfg.SanitizeAPIKeyEntries()
+	}
 	// Load original YAML as a node tree to preserve comments and ordering.
 	data, err := os.ReadFile(configFile)
 	if err != nil {

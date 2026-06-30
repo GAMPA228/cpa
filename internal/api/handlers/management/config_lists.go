@@ -105,17 +105,73 @@ func (h *Handler) deleteFromStringList(c *gin.Context, target *[]string, after f
 }
 
 // api-keys
-func (h *Handler) GetAPIKeys(c *gin.Context) { c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys}) }
+func (h *Handler) GetAPIKeys(c *gin.Context) {
+	h.cfg.SanitizeAPIKeyEntries()
+	c.JSON(200, gin.H{"api-keys": h.cfg.APIKeys, "api-key-entries": h.cfg.APIKeyEntries})
+}
 func (h *Handler) PutAPIKeys(c *gin.Context) {
-	h.putStringList(c, func(v []string) {
-		h.cfg.APIKeys = append([]string(nil), v...)
-	}, nil)
+	data, err := c.GetRawData()
+	if err != nil {
+		c.JSON(400, gin.H{"error": "failed to read body"})
+		return
+	}
+	entries, ok := parseAPIKeyEntriesBody(data)
+	if !ok {
+		c.JSON(400, gin.H{"error": "invalid body"})
+		return
+	}
+	h.cfg.APIKeyEntries = entries
+	h.cfg.SanitizeAPIKeyEntries()
+	h.persist(c)
 }
 func (h *Handler) PatchAPIKeys(c *gin.Context) {
-	h.patchStringList(c, &h.cfg.APIKeys, func() {})
+	h.patchStringList(c, &h.cfg.APIKeys, func() { syncAPIKeyEntriesFromAPIKeys(h.cfg) })
 }
 func (h *Handler) DeleteAPIKeys(c *gin.Context) {
-	h.deleteFromStringList(c, &h.cfg.APIKeys, func() {})
+	h.deleteFromStringList(c, &h.cfg.APIKeys, func() { syncAPIKeyEntriesFromAPIKeys(h.cfg) })
+}
+
+func syncAPIKeyEntriesFromAPIKeys(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	remarks := cfg.APIKeyRemarkMap()
+	entries := make(config.APIKeyEntryList, 0, len(cfg.APIKeys))
+	for _, apiKey := range cfg.APIKeys {
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			continue
+		}
+		entries = append(entries, config.APIKeyEntry{APIKey: apiKey, Remark: remarks[apiKey]})
+	}
+	cfg.APIKeyEntries = entries
+	cfg.SanitizeAPIKeyEntries()
+}
+
+func parseAPIKeyEntriesBody(data []byte) (config.APIKeyEntryList, bool) {
+	var entries config.APIKeyEntryList
+	if err := json.Unmarshal(data, &entries); err == nil {
+		return entries, true
+	}
+
+	var obj struct {
+		Items         config.APIKeyEntryList `json:"items"`
+		APIKeys       config.APIKeyEntryList `json:"api-keys"`
+		APIKeyEntries config.APIKeyEntryList `json:"api-key-entries"`
+	}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return nil, false
+	}
+	switch {
+	case len(obj.APIKeyEntries) > 0:
+		return obj.APIKeyEntries, true
+	case len(obj.APIKeys) > 0:
+		return obj.APIKeys, true
+	case len(obj.Items) > 0:
+		return obj.Items, true
+	default:
+		return nil, false
+	}
 }
 
 // gemini-api-key: []GeminiKey
