@@ -181,3 +181,94 @@ func TestManagerLookupReturnsSingleAPIKeyStatus(t *testing.T) {
 		t.Fatalf("Lookup() missing found = true, want false")
 	}
 }
+
+type testExternalUsageProvider struct {
+	usage map[string]ExternalUsage
+	err   error
+}
+
+func (p testExternalUsageProvider) APIKeyUsageForDay(time.Time) (map[string]ExternalUsage, error) {
+	return p.usage, p.err
+}
+
+func TestManagerStatusesBackfillFromExternalUsageProvider(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-target", Remark: "Alice", DailyTokenLimit: 200},
+		}}},
+		store:             store,
+		loc:               time.UTC,
+		externalSyncEvery: 0,
+	}
+	manager.initUsageMaps()
+	manager.SetExternalUsageProvider(testExternalUsageProvider{usage: map[string]ExternalUsage{
+		"sk-target": {UsedTokens: 150, RequestCount: 3},
+	}})
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+
+	statuses, err := manager.Statuses(now)
+	if err != nil {
+		t.Fatalf("Statuses() error = %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("statuses len = %d, want 1", len(statuses))
+	}
+	if statuses[0].UsedTokens != 150 || statuses[0].RemainingTokens != 50 || statuses[0].RequestCount != 3 {
+		t.Fatalf("status = %#v, want used 150 remaining 50 count 3", statuses[0])
+	}
+
+	if err := manager.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	stored, err := store.Get(hashAPIKey("sk-target"), "2026-07-01")
+	if err != nil {
+		t.Fatalf("store.Get() error = %v", err)
+	}
+	if stored.UsedTokens != 150 || stored.RequestCount != 3 {
+		t.Fatalf("stored = %#v, want 150/3", stored)
+	}
+}
+
+func TestManagerExternalUsageBackfillDoesNotDoubleCount(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-target", DailyTokenLimit: 500},
+		}}},
+		store:             store,
+		loc:               time.UTC,
+		externalSyncEvery: 0,
+	}
+	manager.initUsageMaps()
+	provider := testExternalUsageProvider{usage: map[string]ExternalUsage{
+		"sk-target": {UsedTokens: 150, RequestCount: 3},
+	}}
+	manager.SetExternalUsageProvider(provider)
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+
+	if _, err := manager.Statuses(now); err != nil {
+		t.Fatalf("first Statuses() error = %v", err)
+	}
+	if _, err := manager.Statuses(now.Add(time.Second)); err != nil {
+		t.Fatalf("second Statuses() error = %v", err)
+	}
+	if err := manager.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	stored, err := store.Get(hashAPIKey("sk-target"), "2026-07-01")
+	if err != nil {
+		t.Fatalf("store.Get() error = %v", err)
+	}
+	if stored.UsedTokens != 150 || stored.RequestCount != 3 {
+		t.Fatalf("stored after repeated sync = %#v, want 150/3", stored)
+	}
+}

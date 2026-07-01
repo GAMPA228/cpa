@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	apikeyquota "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/apikeyquota"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
@@ -250,6 +251,36 @@ func NewRequestStatistics() *RequestStatistics {
 		log.Warnf("usagecompat: failed to load sqlite usage details: %v", err)
 	}
 	return stats
+}
+
+// APIKeyUsageForDay returns usage totals grouped by downstream API key for the local day containing now.
+func (s *RequestStatistics) APIKeyUsageForDay(now time.Time) (map[string]apikeyquota.ExternalUsage, error) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	loc := now.Location()
+	if loc == nil {
+		loc = time.Local
+	}
+	localNow := now.In(loc)
+	since := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+	until := since.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	aggregate := s.Aggregate(AggregateQuery{Since: since, Until: until})
+	out := make(map[string]apikeyquota.ExternalUsage)
+	for apiKey, apiStats := range aggregate.APIs {
+		apiKey = strings.TrimSpace(apiKey)
+		if apiKey == "" {
+			continue
+		}
+		out[apiKey] = apikeyquota.ExternalUsage{
+			UsedTokens:   apiStats.TotalTokens,
+			RequestCount: apiStats.TotalRequests,
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // Record ingests a new usage record and updates the aggregates.

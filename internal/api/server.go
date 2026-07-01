@@ -361,6 +361,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 		),
 	)
 	s.apiKeyQuotaManager = apikeyquotamodule.NewManager(cfg)
+	s.apiKeyQuotaManager.SetExternalUsageProvider(usagecompatmodule.DefaultStatistics())
 	coreusage.RegisterNamedPlugin("api-key-quota", s.apiKeyQuotaManager)
 	s.mgmt.SetAPIKeyQuotaManager(s.apiKeyQuotaManager)
 
@@ -439,6 +440,7 @@ func (s *Server) setupRoutes() {
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
 	s.engine.GET(apiKeyUsagePagePath, s.serveAPIKeyUsagePage)
 	s.engine.POST(publicAPIKeyUsagePath, s.lookupPublicAPIKeyUsage)
+	s.registerAPIKeyQuotaManagementRoutes()
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
@@ -679,9 +681,6 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.PUT("/api-keys", s.mgmt.PutAPIKeys)
 		mgmt.PATCH("/api-keys", s.mgmt.PatchAPIKeys)
 		mgmt.DELETE("/api-keys", s.mgmt.DeleteAPIKeys)
-		mgmt.GET("/api-key-quotas", s.mgmt.GetAPIKeyQuotas)
-		mgmt.PUT("/api-key-quotas", s.mgmt.PutAPIKeyQuotas)
-		mgmt.PATCH("/api-key-quotas", s.mgmt.PutAPIKeyQuotas)
 		mgmt.GET("/api-key-usage", s.mgmt.GetAPIKeyUsage)
 		mgmt.GET("/usage-queue", s.mgmt.GetUsageQueue)
 
@@ -769,6 +768,27 @@ func (s *Server) registerManagementRoutes() {
 		if s.usageCompatModule != nil {
 			s.usageCompatModule.RegisterRoutes(mgmt)
 		}
+	}
+}
+
+func (s *Server) registerAPIKeyQuotaManagementRoutes() {
+	if s == nil || s.engine == nil || s.mgmt == nil {
+		return
+	}
+	mgmt := s.engine.Group("/v0/management")
+	mgmt.Use(s.apiKeyQuotaManagementAvailabilityMiddleware(), s.mgmt.Middleware())
+	mgmt.GET("/api-key-quotas", s.mgmt.GetAPIKeyQuotas)
+	mgmt.PUT("/api-key-quotas", s.mgmt.PutAPIKeyQuotas)
+	mgmt.PATCH("/api-key-quotas", s.mgmt.PutAPIKeyQuotas)
+}
+
+func (s *Server) apiKeyQuotaManagementAvailabilityMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s == nil || s.cfg == nil || s.cfg.Home.Enabled {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		c.Next()
 	}
 }
 

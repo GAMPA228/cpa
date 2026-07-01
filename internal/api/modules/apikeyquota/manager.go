@@ -21,10 +21,22 @@ import (
 )
 
 const (
-	sqlitePathEnv     = "APIKEY_QUOTA_SQLITE_PATH"
-	defaultSQLitePath = "apikeyquota.sqlite3"
-	defaultFlushEvery = 5 * time.Second
+	sqlitePathEnv            = "APIKEY_QUOTA_SQLITE_PATH"
+	defaultSQLitePath        = "apikeyquota.sqlite3"
+	defaultFlushEvery        = 5 * time.Second
+	defaultExternalSyncEvery = 5 * time.Second
 )
+
+// ExternalUsage describes persisted usage from another usage ledger.
+type ExternalUsage struct {
+	UsedTokens   int64
+	RequestCount int64
+}
+
+// ExternalUsageProvider supplies already-recorded daily usage for backfilling quota counters.
+type ExternalUsageProvider interface {
+	APIKeyUsageForDay(now time.Time) (map[string]ExternalUsage, error)
+}
 
 // Decision describes whether a downstream API key can start another request.
 type Decision struct {
@@ -66,6 +78,13 @@ type Manager struct {
 	dirtyMu sync.Mutex
 	dirty   map[usageKey]dailyUsage
 
+	externalMu        sync.RWMutex
+	externalProvider  ExternalUsageProvider
+	externalSyncMu    sync.Mutex
+	externalSyncDay   string
+	externalSyncAt    time.Time
+	externalSyncEvery time.Duration
+
 	flushEvery time.Duration
 	stopFlush  chan struct{}
 	flushDone  chan struct{}
@@ -79,10 +98,11 @@ func NewManager(cfg *config.Config) *Manager {
 		log.Warnf("apikeyquota: sqlite store unavailable: %v", err)
 	}
 	manager := &Manager{
-		cfg:        cfg,
-		store:      store,
-		loc:        time.Local,
-		flushEvery: defaultFlushEvery,
+		cfg:               cfg,
+		store:             store,
+		loc:               time.Local,
+		flushEvery:        defaultFlushEvery,
+		externalSyncEvery: defaultExternalSyncEvery,
 	}
 	manager.initUsageMaps()
 	if _, errLoad := manager.ensureDayLoaded(time.Now()); errLoad != nil {
@@ -109,6 +129,16 @@ func (m *Manager) SetConfig(cfg *config.Config) {
 	m.mu.Unlock()
 }
 
+// SetExternalUsageProvider attaches an existing usage ledger used to backfill daily quota counters.
+func (m *Manager) SetExternalUsageProvider(provider ExternalUsageProvider) {
+	if m == nil {
+		return
+	}
+	m.externalMu.Lock()
+	m.externalProvider = provider
+	m.externalMu.Unlock()
+}
+
 // Check returns whether the given downstream API key is still under its daily limit.
 func (m *Manager) Check(apiKey string, now time.Time) (Decision, error) {
 	apiKey = strings.TrimSpace(apiKey)
@@ -130,6 +160,9 @@ func (m *Manager) Check(apiKey string, now time.Time) (Decision, error) {
 	if _, err := m.ensureDayLoaded(now); err != nil {
 		return decision, err
 	}
+	if err := m.syncExternalUsage(now); err != nil {
+		return decision, err
+	}
 	usage := m.usageForKey(usageKey{APIKeyHash: hashAPIKey(apiKey), Day: day})
 	decision.UsedTokens = usage.UsedTokens
 	decision.RemainingTokens = remainingTokens(limit, usage.UsedTokens)
@@ -145,6 +178,9 @@ func (m *Manager) Statuses(now time.Time) ([]Status, error) {
 	entries := m.apiKeyEntries()
 	day, resetAt := m.dayWindow(now)
 	if _, err := m.ensureDayLoaded(now); err != nil {
+		return nil, err
+	}
+	if err := m.syncExternalUsage(now); err != nil {
 		return nil, err
 	}
 	statuses := make([]Status, 0, len(entries))
@@ -192,6 +228,9 @@ func (m *Manager) Lookup(apiKey string, now time.Time) (Status, bool, error) {
 	}
 	day, resetAt := m.dayWindow(now)
 	if _, err := m.ensureDayLoaded(now); err != nil {
+		return Status{}, false, err
+	}
+	if err := m.syncExternalUsage(now); err != nil {
 		return Status{}, false, err
 	}
 	usage := m.usageForKey(usageKey{APIKeyHash: hashAPIKey(apiKey), Day: day})
@@ -376,6 +415,67 @@ func (m *Manager) ensureDayLoaded(now time.Time) (string, error) {
 	return day, nil
 }
 
+func (m *Manager) syncExternalUsage(now time.Time) error {
+	if m == nil {
+		return nil
+	}
+	m.externalMu.RLock()
+	provider := m.externalProvider
+	m.externalMu.RUnlock()
+	if provider == nil {
+		return nil
+	}
+	day, _ := m.dayWindow(now)
+	if day == "" {
+		return nil
+	}
+
+	m.externalSyncMu.Lock()
+	if m.externalSyncEvery <= 0 {
+		m.externalSyncEvery = defaultExternalSyncEvery
+	}
+	if m.externalSyncDay == day && !m.externalSyncAt.IsZero() && time.Since(m.externalSyncAt) < m.externalSyncEvery {
+		m.externalSyncMu.Unlock()
+		return nil
+	}
+	m.externalSyncMu.Unlock()
+
+	usageByAPIKey, err := provider.APIKeyUsageForDay(now)
+	if err != nil {
+		return err
+	}
+	if len(usageByAPIKey) == 0 {
+		m.externalSyncMu.Lock()
+		m.externalSyncDay = day
+		m.externalSyncAt = time.Now()
+		m.externalSyncMu.Unlock()
+		return nil
+	}
+
+	for _, entry := range m.apiKeyEntries() {
+		apiKey := strings.TrimSpace(entry.APIKey)
+		if apiKey == "" {
+			continue
+		}
+		externalUsage := usageByAPIKey[apiKey]
+		if externalUsage.UsedTokens <= 0 && externalUsage.RequestCount <= 0 {
+			continue
+		}
+		key := usageKey{APIKeyHash: hashAPIKey(apiKey), Day: day}
+		counter := m.counterForKey(key)
+		delta := counter.setAtLeast(dailyUsage{UsedTokens: externalUsage.UsedTokens, RequestCount: externalUsage.RequestCount})
+		if delta.UsedTokens > 0 || delta.RequestCount > 0 {
+			m.markDirty(key, delta)
+		}
+	}
+
+	m.externalSyncMu.Lock()
+	m.externalSyncDay = day
+	m.externalSyncAt = time.Now()
+	m.externalSyncMu.Unlock()
+	return nil
+}
+
 func (m *Manager) usageForKey(key usageKey) dailyUsage {
 	if m == nil {
 		return dailyUsage{}
@@ -412,7 +512,7 @@ func (m *Manager) counterForKey(key usageKey) *usageCounter {
 }
 
 func (m *Manager) markDirty(key usageKey, delta dailyUsage) {
-	if m == nil || m.store == nil || delta.UsedTokens <= 0 {
+	if m == nil || m.store == nil || (delta.UsedTokens <= 0 && delta.RequestCount <= 0) {
 		return
 	}
 	m.dirtyMu.Lock()
@@ -564,6 +664,31 @@ func (c *usageCounter) snapshot() dailyUsage {
 	return dailyUsage{
 		UsedTokens:   c.usedTokens.Load(),
 		RequestCount: c.requestCount.Load(),
+	}
+}
+
+func (c *usageCounter) setAtLeast(usage dailyUsage) dailyUsage {
+	if c == nil {
+		return dailyUsage{}
+	}
+	return dailyUsage{
+		UsedTokens:   atomicSetAtLeast(&c.usedTokens, usage.UsedTokens),
+		RequestCount: atomicSetAtLeast(&c.requestCount, usage.RequestCount),
+	}
+}
+
+func atomicSetAtLeast(value *atomic.Int64, next int64) int64 {
+	if value == nil || next <= 0 {
+		return 0
+	}
+	for {
+		current := value.Load()
+		if current >= next {
+			return 0
+		}
+		if value.CompareAndSwap(current, next) {
+			return next - current
+		}
 	}
 }
 
@@ -734,7 +859,7 @@ func (s *sqliteStore) AddMany(batch map[usageKey]dailyUsage, updatedAt time.Time
 		day := strings.TrimSpace(key.Day)
 		usedTokens := usage.UsedTokens
 		requestCount := usage.RequestCount
-		if apiKeyHash == "" || day == "" || usedTokens <= 0 {
+		if apiKeyHash == "" || day == "" || (usedTokens <= 0 && requestCount <= 0) {
 			continue
 		}
 		if requestCount <= 0 {
