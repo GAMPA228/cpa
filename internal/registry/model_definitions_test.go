@@ -2,6 +2,19 @@ package registry
 
 import "testing"
 
+func TestModelOverrideHeadersFromEmbeddedModels(t *testing.T) {
+	got := ModelOverrideHeaders("gpt-5.6-luna")
+	if got == nil {
+		t.Fatal("ModelOverrideHeaders(gpt-5.6-luna) = nil, want headers")
+	}
+	if got["user-agent"] == "" || got["originator"] != "codex-tui" {
+		t.Fatalf("ModelOverrideHeaders(gpt-5.6-luna) = %#v, want codex-tui overrides", got)
+	}
+	if got := ModelOverrideHeaders("gpt-5.4"); got != nil {
+		t.Fatalf("ModelOverrideHeaders(gpt-5.4) = %#v, want nil", got)
+	}
+}
+
 func TestWithXAIBuiltinsIncludesVideoPreviewModel(t *testing.T) {
 	models := WithXAIBuiltins(nil)
 

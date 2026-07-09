@@ -62,10 +62,19 @@ type ModelInfo struct {
 	// This is optional and currently used for Gemini thinking budget normalization.
 	Thinking *ThinkingSupport `json:"thinking,omitempty"`
 
+	// Config holds optional model-specific runtime overrides loaded from models.json.
+	Config *ModelConfig `json:"config,omitempty"`
+
 	// UserDefined indicates this model was defined through config file's models[]
 	// array (e.g., openai-compatibility.*.models[], *-api-key.models[]).
 	// UserDefined models have thinking configuration passed through without validation.
 	UserDefined bool `json:"-"`
+}
+
+// ModelConfig holds optional runtime overrides for a model definition.
+type ModelConfig struct {
+	// OverrideHeader forces upstream request headers when non-empty.
+	OverrideHeader map[string]string `json:"override_header,omitempty"`
 }
 
 type availableModelsCacheEntry struct {
@@ -180,6 +189,26 @@ func LookupModelInfo(modelID string, provider ...string) *ModelInfo {
 		return cloneModelInfo(info)
 	}
 	return cloneModelInfo(LookupStaticModelInfo(modelID))
+}
+
+// ModelOverrideHeaders returns models.json config.override_header for the model, if any.
+func ModelOverrideHeaders(modelID string, provider ...string) map[string]string {
+	info := LookupModelInfo(modelID, provider...)
+	if info == nil || info.Config == nil || len(info.Config.OverrideHeader) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(info.Config.OverrideHeader))
+	for key, value := range info.Config.OverrideHeader {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // SetHook sets an optional hook for observing model registration changes.
@@ -549,6 +578,16 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 			copyThinking.Levels = append([]string(nil), model.Thinking.Levels...)
 		}
 		copyModel.Thinking = &copyThinking
+	}
+	if model.Config != nil {
+		copyConfig := *model.Config
+		if len(model.Config.OverrideHeader) > 0 {
+			copyConfig.OverrideHeader = make(map[string]string, len(model.Config.OverrideHeader))
+			for key, value := range model.Config.OverrideHeader {
+				copyConfig.OverrideHeader[key] = value
+			}
+		}
+		copyModel.Config = &copyConfig
 	}
 	return &copyModel
 }

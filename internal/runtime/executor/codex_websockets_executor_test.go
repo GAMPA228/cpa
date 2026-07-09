@@ -846,6 +846,42 @@ func TestApplyCodexHeadersDoesNotInjectClientOnlyHeadersByDefault(t *testing.T) 
 	}
 }
 
+func TestApplyModelHeaderOverridesFromModelConfig(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	req.Header.Set("User-Agent", "existing-agent")
+	req.Header.Set("Originator", "existing-originator")
+
+	applyModelHeaderOverrides(req.Header, "gpt-5.6-luna")
+
+	wantUA := "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)"
+	if got := req.Header.Get("User-Agent"); got != wantUA {
+		t.Fatalf("User-Agent = %q, want %q", got, wantUA)
+	}
+	if got := req.Header.Get("Originator"); got != "codex-tui" {
+		t.Fatalf("Originator = %q, want codex-tui", got)
+	}
+	if got := req.Header.Get("Session_id"); got == "" {
+		t.Fatal("Session_id should be set for Mac OS user agent override")
+	}
+}
+
+func TestApplyModelHeaderOverridesUnknownModel(t *testing.T) {
+	headers := http.Header{}
+	headers.Set("User-Agent", "existing-agent")
+
+	applyModelHeaderOverrides(headers, "gpt-5.4")
+
+	if got := headers.Get("User-Agent"); got != "existing-agent" {
+		t.Fatalf("User-Agent = %q, want existing-agent", got)
+	}
+	if got := headers.Get("Session_id"); got != "" {
+		t.Fatalf("Session_id = %q, want empty", got)
+	}
+}
+
 func contextWithGinHeaders(headers map[string]string) context.Context {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
