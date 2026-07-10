@@ -12,10 +12,11 @@ func (h *BaseAPIHandler) applyModelRewrite(ctx context.Context, handlerType, mod
 	if h == nil || h.Cfg == nil || !isOpenAICompatibleModelRewriteProtocol(handlerType) {
 		return modelName, rawJSON
 	}
-	rewriteModel, ok := h.Cfg.RewriteModelForAPIKey(userAPIKeyFromExecutionContext(ctx), modelName)
+	rewriteResult, ok := h.Cfg.RewriteModelForAPIKeyWithOptions(userAPIKeyFromExecutionContext(ctx), modelName)
 	if !ok {
 		return modelName, rawJSON
 	}
+	rewriteModel := rewriteResult.Model
 	if len(rawJSON) == 0 {
 		return rewriteModel, rawJSON
 	}
@@ -23,12 +24,27 @@ func (h *BaseAPIHandler) applyModelRewrite(ctx context.Context, handlerType, mod
 	if err != nil {
 		return modelName, rawJSON
 	}
+	if rewriteResult.ThinkingEffort != "" {
+		rewrittenJSON, err = setModelRewriteThinkingEffort(rewrittenJSON, handlerType, rewriteResult.ThinkingEffort)
+		if err != nil {
+			return modelName, rawJSON
+		}
+	}
 	return rewriteModel, rewrittenJSON
 }
 
 func isOpenAICompatibleModelRewriteProtocol(handlerType string) bool {
 	handlerType = strings.ToLower(strings.TrimSpace(handlerType))
 	return handlerType == "openai" || strings.HasPrefix(handlerType, "openai-")
+}
+
+func setModelRewriteThinkingEffort(rawJSON []byte, handlerType, effort string) ([]byte, error) {
+	handlerType = strings.ToLower(strings.TrimSpace(handlerType))
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	if strings.Contains(handlerType, "response") {
+		return sjson.SetBytes(rawJSON, "reasoning.effort", effort)
+	}
+	return sjson.SetBytes(rawJSON, "reasoning_effort", effort)
 }
 
 func userAPIKeyFromExecutionContext(ctx context.Context) string {

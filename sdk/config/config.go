@@ -24,6 +24,7 @@ type ThinkingPolicyConfig = internalconfig.ThinkingPolicyConfig
 type CodexThinkingPolicyConfig = internalconfig.CodexThinkingPolicyConfig
 type ModelRewriteConfig = internalconfig.ModelRewriteConfig
 type ModelRewriteRule = internalconfig.ModelRewriteRule
+type ModelRewriteResult = internalconfig.ModelRewriteResult
 
 type GeminiKey = internalconfig.GeminiKey
 type CodexKey = internalconfig.CodexKey

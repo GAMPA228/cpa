@@ -78,9 +78,10 @@ type ModelRewriteConfig struct {
 // ModelRewriteRule rewrites matching models to TargetModel unless the downstream
 // API key is listed in BypassAPIKeys.
 type ModelRewriteRule struct {
-	MatchModels   []string `yaml:"match-models" json:"match-models"`
-	TargetModel   string   `yaml:"target-model" json:"target-model"`
-	BypassAPIKeys []string `yaml:"bypass-api-keys" json:"bypass-api-keys"`
+	MatchModels          []string `yaml:"match-models" json:"match-models"`
+	TargetModel          string   `yaml:"target-model" json:"target-model"`
+	TargetThinkingEffort string   `yaml:"target-thinking-effort,omitempty" json:"target-thinking-effort,omitempty"`
+	BypassAPIKeys        []string `yaml:"bypass-api-keys" json:"bypass-api-keys"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

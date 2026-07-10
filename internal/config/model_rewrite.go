@@ -2,6 +2,12 @@ package config
 
 import "strings"
 
+// ModelRewriteResult contains all request changes produced by a model rewrite rule.
+type ModelRewriteResult struct {
+	Model          string
+	ThinkingEffort string
+}
+
 // SanitizeModelRewrite normalizes model rewrite rules.
 func (cfg *SDKConfig) SanitizeModelRewrite() {
 	if cfg == nil || len(cfg.ModelRewrite.Rules) == 0 {
@@ -17,6 +23,7 @@ func (cfg *SDKConfig) SanitizeModelRewrite() {
 		if len(rule.MatchModels) == 0 {
 			continue
 		}
+		rule.TargetThinkingEffort = normalizeModelRewriteThinkingEffort(rule.TargetThinkingEffort)
 		rule.BypassAPIKeys = sanitizeModelRewriteStringList(rule.BypassAPIKeys, false)
 		out = append(out, rule)
 	}
@@ -53,27 +60,38 @@ func sanitizeModelRewriteStringList(values []string, caseInsensitive bool) []str
 // RewriteModelForAPIKey returns the effective model for a downstream API key.
 // It preserves a client thinking suffix when the target model does not specify one.
 func (cfg *SDKConfig) RewriteModelForAPIKey(userAPIKey, model string) (string, bool) {
+	result, ok := cfg.RewriteModelForAPIKeyWithOptions(userAPIKey, model)
+	return result.Model, ok
+}
+
+// RewriteModelForAPIKeyWithOptions returns the effective model and optional
+// request-level thinking override for a downstream API key.
+func (cfg *SDKConfig) RewriteModelForAPIKeyWithOptions(userAPIKey, model string) (ModelRewriteResult, bool) {
 	if cfg == nil || !cfg.ModelRewrite.Enabled {
-		return model, false
+		return ModelRewriteResult{Model: model}, false
 	}
 	model = strings.TrimSpace(model)
 	if model == "" {
-		return model, false
+		return ModelRewriteResult{Model: model}, false
 	}
 	for _, rule := range cfg.ModelRewrite.Rules {
 		if !modelRewriteRuleMatches(rule, model) {
 			continue
 		}
 		if modelRewriteBypassAPIKey(rule.BypassAPIKeys, userAPIKey) {
-			return model, false
+			return ModelRewriteResult{Model: model}, false
 		}
+		targetThinkingEffort := normalizeModelRewriteThinkingEffort(rule.TargetThinkingEffort)
 		target := modelRewriteApplySuffix(model, rule.TargetModel)
-		if target == "" || strings.EqualFold(target, model) {
-			return model, false
+		if targetThinkingEffort != "" {
+			target = modelRewriteApplyThinkingEffort(target, targetThinkingEffort)
 		}
-		return target, true
+		if target == "" || strings.EqualFold(target, model) {
+			return ModelRewriteResult{Model: model}, false
+		}
+		return ModelRewriteResult{Model: target, ThinkingEffort: targetThinkingEffort}, true
 	}
-	return model, false
+	return ModelRewriteResult{Model: model}, false
 }
 
 func modelRewriteRuleMatches(rule ModelRewriteRule, model string) bool {
@@ -142,6 +160,16 @@ func modelRewriteApplySuffix(sourceModel, targetModel string) string {
 	return targetModel + "(" + sourceSuffix + ")"
 }
 
+func modelRewriteApplyThinkingEffort(model, effort string) string {
+	model = strings.TrimSpace(model)
+	effort = normalizeModelRewriteThinkingEffort(effort)
+	if model == "" || effort == "" {
+		return model
+	}
+	base, _ := modelRewriteSplitSuffix(model)
+	return base + "(" + effort + ")"
+}
+
 func modelRewriteSplitSuffix(model string) (string, string) {
 	model = strings.TrimSpace(model)
 	if !strings.HasSuffix(model, ")") {
@@ -158,6 +186,16 @@ func modelRewriteSplitSuffix(model string) (string, string) {
 		return model, ""
 	}
 	return base, suffix
+}
+
+func normalizeModelRewriteThinkingEffort(effort string) string {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	switch effort {
+	case "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+		return effort
+	default:
+		return ""
+	}
 }
 
 func modelRewriteWildcardMatch(pattern, value string) bool {

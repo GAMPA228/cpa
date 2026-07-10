@@ -48,12 +48,15 @@ api-keys:
 # Matching requests are rewritten to target-model unless the downstream API key
 # is listed in bypass-api-keys. Rules are evaluated in order; first match wins.
 # match-models supports * and ? wildcards.
+# target-thinking-effort is optional; use it when the source model can request a
+# reasoning level that the target model does not support (low/medium/high/xhigh/max/ultra).
 model-rewrite:
   enabled: false
   rules:
     # - match-models:
     #     - "gpt-5.5"
     #   target-model: "gpt-5.4"
+    #   target-thinking-effort: "high"
     #   bypass-api-keys:
     #     - "your-whitelisted-api-key"
     # - match-models:
@@ -191,12 +194,14 @@ codex:
   identity-confuse: false
 
 # Server-side thinking policy. When enabled, Codex requests without explicit
-# effort default to high, while explicit low/medium/high values are preserved.
-# Only listed downstream API keys may keep xhigh when they explicitly request it.
+# effort default to configured low/medium/high, while explicit low/medium/high values are preserved.
+# Only listed downstream API keys may keep xhigh/max/ultra when explicitly requested.
 thinking-policy:
   codex:
     enabled: false
+    # Allowed values: low, medium, high.
     default-effort: "high"
+    # Historical field name; now means higher-than-high reasoning whitelist.
     xhigh-api-keys: []
 
 # When true, enable authentication for the WebSocket API (/v1/ws).

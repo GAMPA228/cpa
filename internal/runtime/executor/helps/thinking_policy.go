@@ -14,12 +14,14 @@ const (
 	codexThinkingEffortMedium = "medium"
 	codexThinkingEffortHigh   = "high"
 	codexThinkingEffortXHigh  = "xhigh"
+	codexThinkingEffortMax    = "max"
+	codexThinkingEffortUltra  = "ultra"
 )
 
 // ApplyCodexThinkingPolicy enforces server-owned Codex reasoning effort policy.
 // Missing reasoning effort defaults to high. Explicit low/medium/high values are
-// preserved. Whitelisted downstream API keys may keep xhigh when requested;
-// non-whitelisted xhigh requests are downgraded to high.
+// preserved. Whitelisted downstream API keys may keep higher-than-high efforts
+// when requested; non-whitelisted xhigh/max/ultra requests are downgraded to high.
 func ApplyCodexThinkingPolicy(cfg *config.Config, payload []byte, opts cliproxyexecutor.Options) []byte {
 	if cfg == nil || len(payload) == 0 || !cfg.ThinkingPolicy.Codex.Enabled {
 		return payload
@@ -28,8 +30,8 @@ func ApplyCodexThinkingPolicy(cfg *config.Config, payload []byte, opts cliproxye
 	effort := codexPayloadReasoningEffort(payload)
 	switch effort {
 	case codexThinkingEffortLow, codexThinkingEffortMedium, codexThinkingEffortHigh:
-	case codexThinkingEffortXHigh:
-		if !codexPolicyAllowsXHigh(cfg.ThinkingPolicy.Codex, UserAPIKeyFromOptions(opts)) {
+	case codexThinkingEffortXHigh, codexThinkingEffortMax, codexThinkingEffortUltra:
+		if !codexPolicyAllowsHighReasoning(cfg.ThinkingPolicy.Codex, UserAPIKeyFromOptions(opts)) {
 			effort = codexThinkingEffortHigh
 		}
 	default:
@@ -62,7 +64,7 @@ func UserAPIKeyFromOptions(opts cliproxyexecutor.Options) string {
 	return strings.TrimSpace(apiKey)
 }
 
-func codexPolicyAllowsXHigh(policy config.CodexThinkingPolicyConfig, userAPIKey string) bool {
+func codexPolicyAllowsHighReasoning(policy config.CodexThinkingPolicyConfig, userAPIKey string) bool {
 	userAPIKey = strings.TrimSpace(userAPIKey)
 	if userAPIKey == "" {
 		return false

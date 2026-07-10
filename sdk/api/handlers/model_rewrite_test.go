@@ -78,6 +78,72 @@ func TestExecuteWithAuthManagerDoesNotRewriteNonOpenAIProtocol(t *testing.T) {
 	}
 }
 
+func TestExecuteWithAuthManagerRewritesModelThinkingEffort(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.5(high)"
+	executor := &modelExecutionCaptureExecutor{}
+	cfg := modelRewriteTestConfig(sourceModel, "gpt-5.5")
+	cfg.ModelRewrite.Rules[0].TargetThinkingEffort = "high"
+	handler := newModelExecutionHandler(t, targetModel, executor, cfg)
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"messages":[],"reasoning_effort":"ultra"}`, sourceModel))
+	_, _, errMsg := handler.ExecuteWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai", sourceModel, body, "")
+	if errMsg != nil {
+		t.Fatalf("ExecuteWithAuthManager() error = %+v", errMsg)
+	}
+
+	gotReq, gotOpts := executor.captured()
+	assertModelRewriteApplied(t, gotReq, gotOpts, sourceModel, targetModel)
+	if got := gjson.GetBytes(gotReq.Payload, "reasoning_effort").String(); got != "high" {
+		t.Fatalf("payload reasoning_effort = %q, want high", got)
+	}
+}
+
+func TestExecuteWithAuthManagerRewritesResponseThinkingEffort(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.5(high)"
+	executor := &modelExecutionCaptureExecutor{}
+	cfg := modelRewriteTestConfig(sourceModel, "gpt-5.5")
+	cfg.ModelRewrite.Rules[0].TargetThinkingEffort = "high"
+	handler := newModelExecutionHandler(t, targetModel, executor, cfg)
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"input":[],"reasoning":{"effort":"ultra"}}`, sourceModel))
+	_, _, errMsg := handler.ExecuteWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai-response", sourceModel, body, "")
+	if errMsg != nil {
+		t.Fatalf("ExecuteWithAuthManager() error = %+v", errMsg)
+	}
+
+	gotReq, _ := executor.captured()
+	if gotReq.Model != targetModel {
+		t.Fatalf("executor model = %q, want %q", gotReq.Model, targetModel)
+	}
+	if got := gjson.GetBytes(gotReq.Payload, "reasoning.effort").String(); got != "high" {
+		t.Fatalf("payload reasoning.effort = %q, want high", got)
+	}
+}
+
+func TestExecuteWithAuthManagerRewritesResponseModelPreservesUltraThinkingEffort(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.6-terra"
+	executor := &modelExecutionCaptureExecutor{}
+	handler := newModelExecutionHandler(t, targetModel, executor, modelRewriteTestConfig(sourceModel, targetModel))
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"input":[],"reasoning":{"effort":"ultra"}}`, sourceModel))
+	_, _, errMsg := handler.ExecuteWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai-response", sourceModel, body, "")
+	if errMsg != nil {
+		t.Fatalf("ExecuteWithAuthManager() error = %+v", errMsg)
+	}
+
+	gotReq, gotOpts := executor.captured()
+	assertModelRewriteApplied(t, gotReq, gotOpts, sourceModel, targetModel)
+	if got := gjson.GetBytes(gotReq.Payload, "reasoning.effort").String(); got != "ultra" {
+		t.Fatalf("payload reasoning.effort = %q, want ultra", got)
+	}
+	if got := gotOpts.Metadata[coreexecutor.ReasoningEffortMetadataKey]; got != "ultra" {
+		t.Fatalf("reasoning effort metadata = %#v, want ultra", got)
+	}
+}
+
 func TestExecuteCountWithAuthManagerRewritesOpenAIModel(t *testing.T) {
 	sourceModel := "gpt-5.5"
 	targetModel := "gpt-5.4"

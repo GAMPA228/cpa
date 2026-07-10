@@ -10,9 +10,10 @@ func TestSanitizeModelRewriteDropsInvalidRules(t *testing.T) {
 				{MatchModels: []string{"gpt-5.5"}, TargetModel: ""},
 				{MatchModels: []string{"  ", ""}, TargetModel: "gpt-5.4"},
 				{
-					MatchModels:   []string{" GPT-5.5 ", "gpt-5.5"},
-					TargetModel:   " gpt-5.4 ",
-					BypassAPIKeys: []string{" sk-a ", "sk-a", "SK-A"},
+					MatchModels:          []string{" GPT-5.5 ", "gpt-5.5"},
+					TargetModel:          " gpt-5.4 ",
+					TargetThinkingEffort: " Ultra ",
+					BypassAPIKeys:        []string{" sk-a ", "sk-a", "SK-A"},
 				},
 			},
 		},
@@ -26,6 +27,9 @@ func TestSanitizeModelRewriteDropsInvalidRules(t *testing.T) {
 	rule := cfg.ModelRewrite.Rules[0]
 	if got := rule.TargetModel; got != "gpt-5.4" {
 		t.Fatalf("target model = %q, want %q", got, "gpt-5.4")
+	}
+	if got := rule.TargetThinkingEffort; got != "ultra" {
+		t.Fatalf("target thinking effort = %q, want %q", got, "ultra")
 	}
 	if got := rule.MatchModels; len(got) != 1 || got[0] != "GPT-5.5" {
 		t.Fatalf("match models = %#v, want trimmed case-insensitive dedupe", got)
@@ -112,5 +116,21 @@ func TestRewriteModelForAPIKeyTargetSuffixWins(t *testing.T) {
 	got, rewritten := cfg.RewriteModelForAPIKey("sk-user", "gpt-5.5(high)")
 	if !rewritten || got != "gpt-5.4(low)" {
 		t.Fatalf("RewriteModelForAPIKey() = %q/%v, want gpt-5.4(low)/true", got, rewritten)
+	}
+}
+
+func TestRewriteModelForAPIKeyTargetThinkingEffortWins(t *testing.T) {
+	cfg := &SDKConfig{
+		ModelRewrite: ModelRewriteConfig{
+			Enabled: true,
+			Rules: []ModelRewriteRule{
+				{MatchModels: []string{"gpt-5.6-sol"}, TargetModel: "gpt-5.5", TargetThinkingEffort: "high"},
+			},
+		},
+	}
+
+	result, rewritten := cfg.RewriteModelForAPIKeyWithOptions("sk-user", "gpt-5.6-sol(ultra)")
+	if !rewritten || result.Model != "gpt-5.5(high)" || result.ThinkingEffort != "high" {
+		t.Fatalf("RewriteModelForAPIKeyWithOptions() = %+v/%v, want gpt-5.5(high)/high/true", result, rewritten)
 	}
 }

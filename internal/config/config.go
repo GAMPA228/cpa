@@ -863,8 +863,10 @@ func (cfg *Config) SanitizeThinkingPolicy() {
 
 func normalizeCodexThinkingPolicyDefaultEffort(effort string) string {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
-	case "", "high":
+	case "":
 		return "high"
+	case "low", "medium", "high":
+		return strings.ToLower(strings.TrimSpace(effort))
 	default:
 		log.WithField("effort", effort).Warn("unsupported codex thinking policy default effort; falling back to high")
 		return "high"
