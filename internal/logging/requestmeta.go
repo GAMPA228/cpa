@@ -10,6 +10,15 @@ import (
 type endpointKey struct{}
 type responseStatusKey struct{}
 type responseHeadersKey struct{}
+type requestClientAddressKey struct{}
+
+// RequestClientAddress contains immutable downstream request address metadata.
+type RequestClientAddress struct {
+	RemoteAddr     string
+	XForwardedFor  string
+	XRealIP        string
+	CFConnectingIP string
+}
 
 type responseStatusHolder struct {
 	status atomic.Int32
@@ -35,6 +44,23 @@ func GetEndpoint(ctx context.Context) string {
 		return endpoint
 	}
 	return ""
+}
+
+// WithRequestClientAddress stores request address metadata for asynchronous consumers.
+func WithRequestClientAddress(ctx context.Context, address RequestClientAddress) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, requestClientAddressKey{}, address)
+}
+
+// GetRequestClientAddress returns request address metadata captured before async dispatch.
+func GetRequestClientAddress(ctx context.Context) (RequestClientAddress, bool) {
+	if ctx == nil {
+		return RequestClientAddress{}, false
+	}
+	address, ok := ctx.Value(requestClientAddressKey{}).(RequestClientAddress)
+	return address, ok
 }
 
 func WithResponseStatusHolder(ctx context.Context) context.Context {

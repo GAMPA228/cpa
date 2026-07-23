@@ -241,8 +241,25 @@ func (r *UsageReporter) EnsurePublished(ctx context.Context) {
 }
 
 func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
+	ctx = captureUsageRequestClientAddress(ctx)
 	record.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
 	usage.PublishRecord(ctx, record)
+}
+
+func captureUsageRequestClientAddress(ctx context.Context) context.Context {
+	if ctx == nil {
+		return ctx
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil || ginCtx.Request == nil {
+		return ctx
+	}
+	return internallogging.WithRequestClientAddress(ctx, internallogging.RequestClientAddress{
+		RemoteAddr:     ginCtx.Request.RemoteAddr,
+		XForwardedFor:  ginCtx.Request.Header.Get("X-Forwarded-For"),
+		XRealIP:        ginCtx.Request.Header.Get("X-Real-IP"),
+		CFConnectingIP: ginCtx.Request.Header.Get("CF-Connecting-IP"),
+	})
 }
 
 func (r *UsageReporter) buildRecord(detail usage.Detail, failed bool, failures ...usage.Failure) usage.Record {

@@ -124,9 +124,11 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		source := "test-source"
 		authIndex := "0"
+		clientIP := "10.0.0.1"
 		if i == 1 {
 			source = "other-source"
 			authIndex = "1"
+			clientIP = "10.0.0.2"
 		}
 		reasoningEffort := "high"
 		if i == 1 {
@@ -135,6 +137,7 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 		details = append(details, map[string]any{
 			"timestamp":        time.Date(2026, 5, 8, i, 0, 0, 0, time.UTC).Format(time.RFC3339),
 			"latency_ms":       10 + i,
+			"client_ip":        clientIP,
 			"source":           source,
 			"auth_index":       authIndex,
 			"reasoning_effort": reasoningEffort,
@@ -205,7 +208,7 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 		t.Fatalf("detail page has_more = %#v, want false", detailPage["has_more"])
 	}
 
-	filteredDetailPage := performJSONRequest(t, router, http.MethodGet, "/v0/management/usage/details?page_size=10&source=other-source&auth_index=1&search=gpt-4o", nil)
+	filteredDetailPage := performJSONRequest(t, router, http.MethodGet, "/v0/management/usage/details?page_size=10&source=other-source&auth_index=1&search=10.0.0.2", nil)
 	filteredItems, ok := filteredDetailPage["items"].([]any)
 	if !ok {
 		t.Fatalf("filtered detail page items = %#v, want array", filteredDetailPage["items"])
@@ -222,6 +225,9 @@ func TestUsageDashboardLimitsDetailsButExportKeepsAll(t *testing.T) {
 	}
 	if got, ok := filteredItem["reasoning_effort"].(string); !ok || got != "xhigh" {
 		t.Fatalf("filtered detail reasoning_effort = %#v, want xhigh", filteredItem["reasoning_effort"])
+	}
+	if got, ok := filteredItem["client_ip"].(string); !ok || got != "10.0.0.2" {
+		t.Fatalf("filtered detail client_ip = %#v, want 10.0.0.2", filteredItem["client_ip"])
 	}
 
 	aggregate := performJSONRequest(t, router, http.MethodGet, "/v0/management/usage/aggregate?range=all", nil)

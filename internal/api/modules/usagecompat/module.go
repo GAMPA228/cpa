@@ -1,6 +1,7 @@
 package usagecompat
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -76,13 +77,23 @@ func (m *Module) Register(engine *gin.Engine) error {
 
 // OnConfigUpdated refreshes the config reference when the server hot-reloads.
 func (m *Module) OnConfigUpdated(cfg *config.Config) error {
-	if m == nil || m.handler == nil || m.handler.controller == nil {
+	if m == nil || m.handler == nil {
 		return nil
 	}
+	var updateErrs []error
 	if controller, ok := m.handler.controller.(interface{ SetConfig(*config.Config) }); ok {
 		controller.SetConfig(cfg)
 	}
-	return nil
+	if stats, ok := m.handler.stats.(interface{ SetTrustedProxies([]string) error }); ok {
+		var trustedProxies []string
+		if cfg != nil {
+			trustedProxies = cfg.UsageClientIP.TrustedProxies
+		}
+		if err := stats.SetTrustedProxies(trustedProxies); err != nil {
+			updateErrs = append(updateErrs, err)
+		}
+	}
+	return errors.Join(updateErrs...)
 }
 
 // RegisterRoutes attaches the compatibility routes to an existing route group.

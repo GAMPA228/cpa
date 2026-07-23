@@ -391,6 +391,9 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 			usagecompatmodule.NewFileBackedConfigController(cfg, configFilePath),
 		),
 	)
+	if err := s.usageCompatModule.OnConfigUpdated(cfg); err != nil {
+		log.Warnf("failed to initialize usage compatibility module config: %v", err)
+	}
 	s.apiKeyQuotaManager = apikeyquotamodule.NewManager(cfg)
 	s.apiKeyQuotaManager.SetExternalUsageProvider(usagecompatmodule.DefaultStatistics())
 	coreusage.RegisterNamedPlugin("api-key-quota", s.apiKeyQuotaManager)

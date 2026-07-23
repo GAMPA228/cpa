@@ -73,6 +73,7 @@ func (s *sqliteDetailStore) init() error {
 			model_name TEXT NOT NULL,
 			timestamp_ns INTEGER NOT NULL,
 			latency_ms INTEGER NOT NULL,
+			client_ip TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL,
 			auth_index TEXT NOT NULL,
 			reasoning_effort TEXT NOT NULL DEFAULT '',
@@ -85,12 +86,13 @@ func (s *sqliteDetailStore) init() error {
 			dedup_key TEXT NOT NULL UNIQUE
 		)`,
 		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS usage_details_api_model_time_idx ON usage_details(api_name, model_name, timestamp_ns DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS usage_details_time_idx ON usage_details(timestamp_ns DESC, id DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
-			if strings.Contains(statement, "ADD COLUMN reasoning_effort") && strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+			if strings.Contains(statement, "ADD COLUMN") && strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 				continue
 			}
 			return fmt.Errorf("sqlite init statement failed: %w", err)
@@ -111,14 +113,15 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO usage_details (
-			api_name, model_name, timestamp_ns, latency_ms, source, auth_index, reasoning_effort,
+			api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_index, reasoning_effort,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
 			failed, dedup_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
 		detail.LatencyMs,
+		detail.ClientIP,
 		detail.Source,
 		detail.AuthIndex,
 		detail.ReasoningEffort,
@@ -374,7 +377,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 	if newestFirst {
 		order = "ORDER BY timestamp_ns DESC, id DESC"
 	}
-	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, source, auth_index, reasoning_effort,
+	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_index, reasoning_effort,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
 		FROM usage_details ` + where + " " + order
 	if limit >= 0 {
@@ -423,9 +426,9 @@ func detailWhereClause(query DetailPageQuery) (string, []any) {
 		args = append(args, query.AuthIndex)
 	}
 	if query.Search != "" {
-		conditions = append(conditions, "(api_name LIKE ? ESCAPE '\\' OR model_name LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR auth_index LIKE ? ESCAPE '\\')")
+		conditions = append(conditions, "(api_name LIKE ? ESCAPE '\\' OR model_name LIKE ? ESCAPE '\\' OR client_ip LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR auth_index LIKE ? ESCAPE '\\')")
 		searchArg := "%" + escapeSQLiteLike(query.Search) + "%"
-		args = append(args, searchArg, searchArg, searchArg, searchArg)
+		args = append(args, searchArg, searchArg, searchArg, searchArg, searchArg)
 	}
 	if len(conditions) == 0 {
 		return "", args
@@ -493,6 +496,7 @@ func scanDetailRow(rows interface {
 		&row.Model,
 		&timestampNS,
 		&row.LatencyMs,
+		&row.ClientIP,
 		&row.Source,
 		&row.AuthIndex,
 		&row.ReasoningEffort,
@@ -524,6 +528,7 @@ func detailFromRow(row UsageDetailRow) RequestDetail {
 	return RequestDetail{
 		Timestamp:       row.Timestamp,
 		LatencyMs:       row.LatencyMs,
+		ClientIP:        row.ClientIP,
 		Source:          row.Source,
 		AuthIndex:       row.AuthIndex,
 		ReasoningEffort: row.ReasoningEffort,
@@ -540,6 +545,7 @@ func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDeta
 		Model:           modelName,
 		Timestamp:       detail.Timestamp,
 		LatencyMs:       detail.LatencyMs,
+		ClientIP:        detail.ClientIP,
 		Source:          detail.Source,
 		AuthIndex:       detail.AuthIndex,
 		ReasoningEffort: detail.ReasoningEffort,
@@ -592,6 +598,7 @@ func detailRowMatchesQuery(row UsageDetailRow, query DetailPageQuery) bool {
 	search := strings.ToLower(query.Search)
 	return strings.Contains(strings.ToLower(row.API), search) ||
 		strings.Contains(strings.ToLower(row.Model), search) ||
+		strings.Contains(strings.ToLower(row.ClientIP), search) ||
 		strings.Contains(strings.ToLower(row.Source), search) ||
 		strings.Contains(strings.ToLower(row.AuthIndex), search)
 }

@@ -120,6 +120,11 @@ error-logs-max-files: 10
 # When false, disable in-memory usage statistics aggregation
 usage-statistics-enabled: false
 
+# Client IP collection for request usage details. Proxy headers are ignored unless the
+# direct TCP peer matches one of these IP addresses or CIDR ranges.
+usage-client-ip:
+  trusted-proxies: []
+
 # How long (in seconds) usage queue items are retained in memory for the Management API.
 # The local Redis RESP usage output is disabled.
 # Default: 60. Max: 3600.

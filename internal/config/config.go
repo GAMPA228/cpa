@@ -73,6 +73,9 @@ type Config struct {
 	// UsageStatisticsEnabled toggles in-memory usage aggregation; when false, usage data is discarded.
 	UsageStatisticsEnabled bool `yaml:"usage-statistics-enabled" json:"usage-statistics-enabled"`
 
+	// UsageClientIP controls trusted proxy handling for usage detail client IPs.
+	UsageClientIP UsageClientIPConfig `yaml:"usage-client-ip" json:"usage-client-ip"`
+
 	// RedisUsageQueueRetentionSeconds controls how long usage queue items are retained
 	// in memory for Management API consumers.
 	// Default: 60. Max: 3600.
@@ -173,6 +176,11 @@ type Config struct {
 
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
+}
+
+// UsageClientIPConfig controls secure client IP resolution for usage statistics.
+type UsageClientIPConfig struct {
+	TrustedProxies []string `yaml:"trusted-proxies" json:"trusted-proxies"`
 }
 
 // PluginsConfig holds dynamic plugin system settings.

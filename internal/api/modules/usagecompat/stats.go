@@ -3,10 +3,12 @@ package usagecompat
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	apikeyquota "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/apikeyquota"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
@@ -39,7 +41,8 @@ func (p *LoggerPlugin) HandleUsage(ctx context.Context, record coreusage.Record)
 
 // RequestStatistics maintains aggregated request metrics in memory.
 type RequestStatistics struct {
-	mu sync.RWMutex
+	mu         sync.RWMutex
+	clientIPMu sync.RWMutex
 
 	totalRequests int64
 	successCount  int64
@@ -53,7 +56,8 @@ type RequestStatistics struct {
 	tokensByDay    map[string]int64
 	tokensByHour   map[int]int64
 
-	detailStore *sqliteDetailStore
+	detailStore          *sqliteDetailStore
+	trustedProxyPrefixes []netip.Prefix
 }
 
 type apiStats struct {
@@ -72,6 +76,7 @@ type modelStats struct {
 type RequestDetail struct {
 	Timestamp       time.Time  `json:"timestamp"`
 	LatencyMs       int64      `json:"latency_ms"`
+	ClientIP        string     `json:"client_ip,omitempty"`
 	Source          string     `json:"source"`
 	AuthIndex       string     `json:"auth_index"`
 	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
@@ -132,6 +137,7 @@ type UsageDetailRow struct {
 	Model           string     `json:"model"`
 	Timestamp       time.Time  `json:"timestamp"`
 	LatencyMs       int64      `json:"latency_ms"`
+	ClientIP        string     `json:"client_ip"`
 	Source          string     `json:"source"`
 	AuthIndex       string     `json:"auth_index"`
 	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
@@ -253,6 +259,34 @@ func NewRequestStatistics() *RequestStatistics {
 	return stats
 }
 
+// SetTrustedProxies replaces the trusted proxy list used for usage client IP resolution.
+func (s *RequestStatistics) SetTrustedProxies(values []string) error {
+	if s == nil {
+		return nil
+	}
+	prefixes := make([]netip.Prefix, 0, len(values))
+	invalid := make([]string, 0)
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		prefix, err := parseTrustedProxyPrefix(value)
+		if err != nil {
+			invalid = append(invalid, value)
+			continue
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	s.clientIPMu.Lock()
+	s.trustedProxyPrefixes = prefixes
+	s.clientIPMu.Unlock()
+	if len(invalid) > 0 {
+		return fmt.Errorf("invalid usage-client-ip trusted proxies: %s", strings.Join(invalid, ", "))
+	}
+	return nil
+}
+
 // APIKeyUsageForDay returns usage totals grouped by downstream API key for the local day containing now.
 func (s *RequestStatistics) APIKeyUsageForDay(now time.Time) (map[string]apikeyquota.ExternalUsage, error) {
 	if now.IsZero() {
@@ -314,6 +348,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	requestDetail := RequestDetail{
 		Timestamp:       timestamp,
 		LatencyMs:       normalizeLatency(record.Latency),
+		ClientIP:        s.resolveClientIP(ctx),
 		Source:          record.Source,
 		AuthIndex:       record.AuthIndex,
 		ReasoningEffort: strings.TrimSpace(record.ReasoningEffort),
@@ -717,6 +752,7 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 }
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
+	detail.ClientIP = strings.TrimSpace(detail.ClientIP)
 	detail.Tokens = normalizeTokenStats(detail.Tokens)
 	if detail.LatencyMs < 0 {
 		detail.LatencyMs = 0
@@ -725,6 +761,118 @@ func normalizeRequestDetail(detail RequestDetail) RequestDetail {
 		detail.Timestamp = time.Now()
 	}
 	return detail
+}
+
+func parseTrustedProxyPrefix(value string) (netip.Prefix, error) {
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		address := normalizedIP(prefix.Addr())
+		bits := prefix.Bits()
+		if prefix.Addr().Is4In6() {
+			if bits < 96 {
+				return netip.Prefix{}, fmt.Errorf("IPv4-mapped prefix is broader than IPv4 space")
+			}
+			bits -= 96
+		}
+		normalized := netip.PrefixFrom(address, bits)
+		if !normalized.IsValid() {
+			return netip.Prefix{}, fmt.Errorf("invalid normalized prefix")
+		}
+		return normalized.Masked(), nil
+	}
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	address = normalizedIP(address)
+	return netip.PrefixFrom(address, address.BitLen()), nil
+}
+
+func (s *RequestStatistics) resolveClientIP(ctx context.Context) string {
+	address, ok := internallogging.GetRequestClientAddress(ctx)
+	if !ok {
+		address = requestClientAddressFromGinContext(ctx)
+	}
+	peer, ok := parseClientIP(address.RemoteAddr)
+	if !ok {
+		return ""
+	}
+	if !s.isTrustedProxy(peer) {
+		return peer.String()
+	}
+	if forwarded := s.resolveForwardedFor(address.XForwardedFor); forwarded.IsValid() {
+		return forwarded.String()
+	}
+	for _, candidate := range []string{address.XRealIP, address.CFConnectingIP} {
+		if resolved, valid := parseClientIP(candidate); valid {
+			return resolved.String()
+		}
+	}
+	return peer.String()
+}
+
+func requestClientAddressFromGinContext(ctx context.Context) internallogging.RequestClientAddress {
+	if ctx == nil {
+		return internallogging.RequestClientAddress{}
+	}
+	ginCtx, ok := ctx.Value("gin").(*gin.Context)
+	if !ok || ginCtx == nil || ginCtx.Request == nil {
+		return internallogging.RequestClientAddress{}
+	}
+	return internallogging.RequestClientAddress{
+		RemoteAddr:     ginCtx.Request.RemoteAddr,
+		XForwardedFor:  ginCtx.Request.Header.Get("X-Forwarded-For"),
+		XRealIP:        ginCtx.Request.Header.Get("X-Real-IP"),
+		CFConnectingIP: ginCtx.Request.Header.Get("CF-Connecting-IP"),
+	}
+}
+
+func (s *RequestStatistics) resolveForwardedFor(value string) netip.Addr {
+	parts := strings.Split(value, ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		address, ok := parseClientIP(parts[i])
+		if !ok {
+			continue
+		}
+		if !s.isTrustedProxy(address) {
+			return address
+		}
+	}
+	return netip.Addr{}
+}
+
+func (s *RequestStatistics) isTrustedProxy(address netip.Addr) bool {
+	if s == nil || !address.IsValid() {
+		return false
+	}
+	address = normalizedIP(address)
+	s.clientIPMu.RLock()
+	defer s.clientIPMu.RUnlock()
+	for _, prefix := range s.trustedProxyPrefixes {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseClientIP(value string) (netip.Addr, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return netip.Addr{}, false
+	}
+	if addressPort, err := netip.ParseAddrPort(value); err == nil {
+		return normalizedIP(addressPort.Addr()), true
+	}
+	value = strings.TrimPrefix(strings.TrimSuffix(value, "]"), "[")
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return normalizedIP(address), true
+}
+
+func normalizedIP(address netip.Addr) netip.Addr {
+	return address.WithZone("").Unmap()
 }
 
 func dedupKey(apiName, modelName string, detail RequestDetail) string {
