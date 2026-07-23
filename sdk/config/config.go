@@ -28,6 +28,8 @@ type ModelRewriteResult = internalconfig.ModelRewriteResult
 
 type GeminiKey = internalconfig.GeminiKey
 type CodexKey = internalconfig.CodexKey
+type XAIKey = internalconfig.XAIKey
+type XAIModel = internalconfig.XAIModel
 type ClaudeKey = internalconfig.ClaudeKey
 type VertexCompatKey = internalconfig.VertexCompatKey
 type VertexCompatModel = internalconfig.VertexCompatModel
