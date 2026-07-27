@@ -13,6 +13,11 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 - When asked to pull official updates, check and preserve local changes first; backend updates come from backend `origin`, frontend updates come from frontend `upstream`.
 - Do not push backend or frontend changes unless the user explicitly asks.
 
+## Git Workflow
+- After implementing and verifying a requested change, commit the task-related local changes in every affected repository unless the user explicitly asks not to commit.
+- Stage only files belonging to the completed task; preserve unrelated working-tree changes.
+- Do not push backend or frontend commits unless the user explicitly asks.
+
 ## Commands
 ```bash
 gofmt -w . # Format (required after Go changes)
@@ -23,6 +28,14 @@ go test -v -run TestName ./path/to/pkg # Run single test
 go build -o test-output ./cmd/server && rm test-output # Verify compile (REQUIRED after changes)
 ```
 - Common flags: `--config <path>`, `--tui`, `--standalone`, `--local-model`, `--no-browser`, `--oauth-callback-port <port>`
+
+## Custom Linux Packaging
+- When the user asks for a versioned package, always build both `linux/amd64` and `linux/arm64` with `CGO_ENABLED=0`.
+- Keep previous versions and write new binaries to:
+  - AMD64: `cmd/server/amd/v<version>/cpa-server`
+  - ARM64: `cmd/server/arm/v<version>/clip-server`
+- Embed the requested version (without the leading `v`), current short Git commit, and UTC build time through `main.Version`, `main.Commit`, and `main.BuildDate` ldflags.
+- Verify each binary with `go version -m` and report its size and SHA-256 checksum.
 
 ## Config
 - Default config: `config.yaml` (template: `config.example.yaml`)
