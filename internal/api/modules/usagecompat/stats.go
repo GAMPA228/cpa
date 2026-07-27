@@ -63,12 +63,14 @@ type RequestStatistics struct {
 type apiStats struct {
 	TotalRequests int64
 	TotalTokens   int64
+	Tokens        TokenStats
 	Models        map[string]*modelStats
 }
 
 type modelStats struct {
 	TotalRequests int64
 	TotalTokens   int64
+	Tokens        TokenStats
 	Details       []RequestDetail
 }
 
@@ -112,6 +114,7 @@ type StatisticsSnapshot struct {
 type APISnapshot struct {
 	TotalRequests int64                    `json:"total_requests"`
 	TotalTokens   int64                    `json:"total_tokens"`
+	Tokens        TokenStats               `json:"tokens"`
 	Models        map[string]ModelSnapshot `json:"models"`
 }
 
@@ -119,6 +122,7 @@ type APISnapshot struct {
 type ModelSnapshot struct {
 	TotalRequests    int64           `json:"total_requests"`
 	TotalTokens      int64           `json:"total_tokens"`
+	Tokens           TokenStats      `json:"tokens"`
 	Details          []RequestDetail `json:"details"`
 	DetailsTruncated bool            `json:"details_truncated,omitempty"`
 	DetailsLimit     int             `json:"details_limit,omitempty"`
@@ -386,15 +390,19 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 }
 
 func (s *RequestStatistics) updateAPIStats(stats *apiStats, model string, detail RequestDetail) {
+	tokens := normalizeTokenStats(detail.Tokens)
 	stats.TotalRequests++
-	stats.TotalTokens += detail.Tokens.TotalTokens
+	stats.TotalTokens += tokens.TotalTokens
+	addTokenTotals(&stats.Tokens, tokens)
 	modelStatsValue, ok := stats.Models[model]
 	if !ok {
 		modelStatsValue = &modelStats{}
 		stats.Models[model] = modelStatsValue
 	}
 	modelStatsValue.TotalRequests++
-	modelStatsValue.TotalTokens += detail.Tokens.TotalTokens
+	modelStatsValue.TotalTokens += tokens.TotalTokens
+	addTokenTotals(&modelStatsValue.Tokens, tokens)
+	detail.Tokens = tokens
 	modelStatsValue.Details = append(modelStatsValue.Details, detail)
 	if len(modelStatsValue.Details) > inMemoryDetailCacheLimit {
 		copy(modelStatsValue.Details, modelStatsValue.Details[len(modelStatsValue.Details)-inMemoryDetailCacheLimit:])
@@ -427,6 +435,7 @@ func (s *RequestStatistics) SnapshotWithOptions(options SnapshotOptions) Statist
 		apiSnapshot := APISnapshot{
 			TotalRequests: stats.TotalRequests,
 			TotalTokens:   stats.TotalTokens,
+			Tokens:        stats.Tokens,
 			Models:        make(map[string]ModelSnapshot, len(stats.Models)),
 		}
 		for modelName, modelStatsValue := range stats.Models {
@@ -434,6 +443,7 @@ func (s *RequestStatistics) SnapshotWithOptions(options SnapshotOptions) Statist
 			apiSnapshot.Models[modelName] = ModelSnapshot{
 				TotalRequests:    modelStatsValue.TotalRequests,
 				TotalTokens:      modelStatsValue.TotalTokens,
+				Tokens:           modelStatsValue.Tokens,
 				Details:          requestDetails,
 				DetailsTruncated: truncated,
 				DetailsLimit:     detailLimitJSONValue(options.DetailLimit, truncated),
@@ -1032,12 +1042,19 @@ func addAggregateTotals(totalRequests, successCount, failureCount, totalTokens *
 		*totalTokens += tokens.TotalTokens
 	}
 	if tokenTotals != nil {
-		tokenTotals.InputTokens += tokens.InputTokens
-		tokenTotals.OutputTokens += tokens.OutputTokens
-		tokenTotals.ReasoningTokens += tokens.ReasoningTokens
-		tokenTotals.CachedTokens += tokens.CachedTokens
-		tokenTotals.TotalTokens += tokens.TotalTokens
+		addTokenTotals(tokenTotals, tokens)
 	}
+}
+
+func addTokenTotals(target *TokenStats, tokens TokenStats) {
+	if target == nil {
+		return
+	}
+	target.InputTokens += tokens.InputTokens
+	target.OutputTokens += tokens.OutputTokens
+	target.ReasoningTokens += tokens.ReasoningTokens
+	target.CachedTokens += tokens.CachedTokens
+	target.TotalTokens += tokens.TotalTokens
 }
 
 func normalizeLatency(latency time.Duration) int64 {
