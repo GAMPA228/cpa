@@ -11,6 +11,7 @@ type endpointKey struct{}
 type responseStatusKey struct{}
 type responseHeadersKey struct{}
 type requestClientAddressKey struct{}
+type clientRequestMetadataKey struct{}
 
 // RequestClientAddress contains immutable downstream request address metadata.
 type RequestClientAddress struct {
@@ -18,6 +19,13 @@ type RequestClientAddress struct {
 	XForwardedFor  string
 	XRealIP        string
 	CFConnectingIP string
+}
+
+// ClientRequestMetadata stores immutable downstream request metadata for asynchronous consumers.
+type ClientRequestMetadata struct {
+	ClientIP      string
+	XForwardedFor string
+	UserAgent     string
 }
 
 type responseStatusHolder struct {
@@ -61,6 +69,25 @@ func GetRequestClientAddress(ctx context.Context) (RequestClientAddress, bool) {
 	}
 	address, ok := ctx.Value(requestClientAddressKey{}).(RequestClientAddress)
 	return address, ok
+}
+
+// WithClientRequestMetadata stores a snapshot of downstream request metadata in ctx.
+func WithClientRequestMetadata(ctx context.Context, metadata ClientRequestMetadata) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, clientRequestMetadataKey{}, metadata)
+}
+
+// GetClientRequestMetadata returns downstream request metadata stored in ctx.
+func GetClientRequestMetadata(ctx context.Context) ClientRequestMetadata {
+	if ctx == nil {
+		return ClientRequestMetadata{}
+	}
+	if metadata, ok := ctx.Value(clientRequestMetadataKey{}).(ClientRequestMetadata); ok {
+		return metadata
+	}
+	return ClientRequestMetadata{}
 }
 
 func WithResponseStatusHolder(ctx context.Context) context.Context {
