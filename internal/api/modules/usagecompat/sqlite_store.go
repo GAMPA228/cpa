@@ -77,6 +77,9 @@ func (s *sqliteDetailStore) init() error {
 			source TEXT NOT NULL,
 			auth_index TEXT NOT NULL,
 			reasoning_effort TEXT NOT NULL DEFAULT '',
+			service_tier TEXT NOT NULL DEFAULT '',
+			applied_service_tier TEXT NOT NULL DEFAULT '',
+			response_service_tier TEXT NOT NULL DEFAULT '',
 			input_tokens INTEGER NOT NULL,
 			output_tokens INTEGER NOT NULL,
 			reasoning_tokens INTEGER NOT NULL,
@@ -87,6 +90,9 @@ func (s *sqliteDetailStore) init() error {
 		)`,
 		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN service_tier TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN applied_service_tier TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN response_service_tier TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS usage_details_api_model_time_idx ON usage_details(api_name, model_name, timestamp_ns DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS usage_details_time_idx ON usage_details(timestamp_ns DESC, id DESC)`,
 	}
@@ -114,9 +120,10 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 	_, err := s.db.Exec(
 		`INSERT INTO usage_details (
 			api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_index, reasoning_effort,
+			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
 			failed, dedup_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
@@ -125,6 +132,9 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 		detail.Source,
 		detail.AuthIndex,
 		detail.ReasoningEffort,
+		detail.ServiceTier,
+		detail.AppliedTier,
+		detail.ResponseTier,
 		tokens.InputTokens,
 		tokens.OutputTokens,
 		tokens.ReasoningTokens,
@@ -215,7 +225,8 @@ func (s *sqliteDetailStore) ForEach(fn func(apiName, modelName string, detail Re
 		return nil
 	}
 	rows, err := s.db.Query(
-		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, source, auth_index, reasoning_effort,
+		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_index, reasoning_effort,
+			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
 		FROM usage_details
 		ORDER BY timestamp_ns ASC, id ASC`,
@@ -378,6 +389,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 		order = "ORDER BY timestamp_ns DESC, id DESC"
 	}
 	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_index, reasoning_effort,
+		service_tier, applied_service_tier, response_service_tier,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
 		FROM usage_details ` + where + " " + order
 	if limit >= 0 {
@@ -426,9 +438,9 @@ func detailWhereClause(query DetailPageQuery) (string, []any) {
 		args = append(args, query.AuthIndex)
 	}
 	if query.Search != "" {
-		conditions = append(conditions, "(api_name LIKE ? ESCAPE '\\' OR model_name LIKE ? ESCAPE '\\' OR client_ip LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR auth_index LIKE ? ESCAPE '\\')")
+		conditions = append(conditions, "(api_name LIKE ? ESCAPE '\\' OR model_name LIKE ? ESCAPE '\\' OR client_ip LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR auth_index LIKE ? ESCAPE '\\' OR service_tier LIKE ? ESCAPE '\\' OR applied_service_tier LIKE ? ESCAPE '\\' OR response_service_tier LIKE ? ESCAPE '\\')")
 		searchArg := "%" + escapeSQLiteLike(query.Search) + "%"
-		args = append(args, searchArg, searchArg, searchArg, searchArg, searchArg)
+		args = append(args, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg)
 	}
 	if len(conditions) == 0 {
 		return "", args
@@ -500,6 +512,9 @@ func scanDetailRow(rows interface {
 		&row.Source,
 		&row.AuthIndex,
 		&row.ReasoningEffort,
+		&row.ServiceTier,
+		&row.AppliedTier,
+		&row.ResponseTier,
 		&row.Tokens.InputTokens,
 		&row.Tokens.OutputTokens,
 		&row.Tokens.ReasoningTokens,
@@ -532,6 +547,9 @@ func detailFromRow(row UsageDetailRow) RequestDetail {
 		Source:          row.Source,
 		AuthIndex:       row.AuthIndex,
 		ReasoningEffort: row.ReasoningEffort,
+		ServiceTier:     row.ServiceTier,
+		AppliedTier:     row.AppliedTier,
+		ResponseTier:    row.ResponseTier,
 		Tokens:          row.Tokens,
 		Failed:          row.Failed,
 	}
@@ -549,6 +567,9 @@ func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDeta
 		Source:          detail.Source,
 		AuthIndex:       detail.AuthIndex,
 		ReasoningEffort: detail.ReasoningEffort,
+		ServiceTier:     detail.ServiceTier,
+		AppliedTier:     detail.AppliedTier,
+		ResponseTier:    detail.ResponseTier,
 		Tokens:          detail.Tokens,
 		Failed:          detail.Failed,
 	}
@@ -600,7 +621,10 @@ func detailRowMatchesQuery(row UsageDetailRow, query DetailPageQuery) bool {
 		strings.Contains(strings.ToLower(row.Model), search) ||
 		strings.Contains(strings.ToLower(row.ClientIP), search) ||
 		strings.Contains(strings.ToLower(row.Source), search) ||
-		strings.Contains(strings.ToLower(row.AuthIndex), search)
+		strings.Contains(strings.ToLower(row.AuthIndex), search) ||
+		strings.Contains(strings.ToLower(row.ServiceTier), search) ||
+		strings.Contains(strings.ToLower(row.AppliedTier), search) ||
+		strings.Contains(strings.ToLower(row.ResponseTier), search)
 }
 
 func escapeSQLiteLike(value string) string {

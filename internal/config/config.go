@@ -124,6 +124,9 @@ type Config struct {
 	// ThinkingPolicy configures server-side reasoning effort enforcement.
 	ThinkingPolicy ThinkingPolicyConfig `yaml:"thinking-policy" json:"thinking-policy"`
 
+	// ServiceTierPolicy configures server-side Codex priority service tier enforcement.
+	ServiceTierPolicy ServiceTierPolicyConfig `yaml:"service-tier-policy" json:"service-tier-policy"`
+
 	// CodexHeaderDefaults configures fallback headers for Codex OAuth model requests.
 	// These are used only when the client does not send its own headers.
 	CodexHeaderDefaults CodexHeaderDefaults `yaml:"codex-header-defaults" json:"codex-header-defaults"`

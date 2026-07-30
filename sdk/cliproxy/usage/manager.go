@@ -34,6 +34,8 @@ type Record struct {
 	ReasoningEffort string
 	// ServiceTier stores the client-requested service tier.
 	ServiceTier string
+	// AppliedServiceTier stores the service tier sent to the upstream provider.
+	AppliedServiceTier string
 	// RequestServiceTier is a deprecated input-only alias retained for existing
 	// plugin callers. It is normalized into ServiceTier and never emitted.
 	RequestServiceTier string

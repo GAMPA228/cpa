@@ -33,6 +33,7 @@ type UsageReporter struct {
 	source       string
 	reasoning    string
 	serviceTier  string
+	appliedTier  string
 	generate     bool
 	requestedAt  time.Time
 	ttftMu       sync.RWMutex
@@ -109,6 +110,10 @@ func (r *UsageReporter) SetTranslatedReasoningEffort(payload []byte, format stri
 		return
 	}
 	r.reasoning = thinking.ExtractTranslatedReasoningEffort(payload, format)
+	r.appliedTier = strings.TrimSpace(gjson.GetBytes(payload, "service_tier").String())
+	if r.appliedTier == "" {
+		r.appliedTier = usage.DefaultServiceTier
+	}
 }
 
 func (r *UsageReporter) TrackHTTPClient(client *http.Client) *http.Client {
@@ -284,6 +289,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		AuthType:            r.authType,
 		ReasoningEffort:     r.reasoning,
 		ServiceTier:         r.serviceTier,
+		AppliedServiceTier:  r.appliedTier,
 		ResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
 		Generate:            usage.GenerateFlag(r.generate),
 		RequestedAt:         r.requestedAt,

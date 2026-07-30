@@ -107,6 +107,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.OAuthExcludedModels = NormalizeOAuthExcludedModels(cfg.OAuthExcludedModels)
 	cfg.SanitizeOAuthModelAlias()
 	cfg.SanitizeThinkingPolicy()
+	cfg.SanitizeServiceTierPolicy()
 	cfg.SanitizeModelRewrite()
 	cfg.SanitizePayloadRules()
 

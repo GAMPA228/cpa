@@ -82,6 +82,9 @@ type RequestDetail struct {
 	Source          string     `json:"source"`
 	AuthIndex       string     `json:"auth_index"`
 	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
+	ServiceTier     string     `json:"service_tier,omitempty"`
+	AppliedTier     string     `json:"applied_service_tier,omitempty"`
+	ResponseTier    string     `json:"response_service_tier,omitempty"`
 	Tokens          TokenStats `json:"tokens"`
 	Failed          bool       `json:"failed"`
 }
@@ -145,6 +148,9 @@ type UsageDetailRow struct {
 	Source          string     `json:"source"`
 	AuthIndex       string     `json:"auth_index"`
 	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
+	ServiceTier     string     `json:"service_tier,omitempty"`
+	AppliedTier     string     `json:"applied_service_tier,omitempty"`
+	ResponseTier    string     `json:"response_service_tier,omitempty"`
 	Tokens          TokenStats `json:"tokens"`
 	Failed          bool       `json:"failed"`
 }
@@ -356,6 +362,9 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		Source:          record.Source,
 		AuthIndex:       record.AuthIndex,
 		ReasoningEffort: strings.TrimSpace(record.ReasoningEffort),
+		ServiceTier:     normalizedRequestServiceTier(record),
+		AppliedTier:     strings.TrimSpace(record.AppliedServiceTier),
+		ResponseTier:    normalizedResponseServiceTier(record),
 		Tokens:          detail,
 		Failed:          failed,
 	}
@@ -763,6 +772,10 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
 	detail.ClientIP = strings.TrimSpace(detail.ClientIP)
+	detail.ReasoningEffort = strings.TrimSpace(detail.ReasoningEffort)
+	detail.ServiceTier = strings.TrimSpace(detail.ServiceTier)
+	detail.AppliedTier = strings.TrimSpace(detail.AppliedTier)
+	detail.ResponseTier = strings.TrimSpace(detail.ResponseTier)
 	detail.Tokens = normalizeTokenStats(detail.Tokens)
 	if detail.LatencyMs < 0 {
 		detail.LatencyMs = 0
@@ -771,6 +784,22 @@ func normalizeRequestDetail(detail RequestDetail) RequestDetail {
 		detail.Timestamp = time.Now()
 	}
 	return detail
+}
+
+func normalizedRequestServiceTier(record coreusage.Record) string {
+	tier := strings.TrimSpace(record.ServiceTier)
+	if tier == "" {
+		tier = strings.TrimSpace(record.RequestServiceTier)
+	}
+	return tier
+}
+
+func normalizedResponseServiceTier(record coreusage.Record) string {
+	tier := strings.TrimSpace(record.ResponseServiceTier)
+	if tier == "" {
+		tier = strings.TrimSpace(record.Detail.ResponseServiceTier)
+	}
+	return tier
 }
 
 func parseTrustedProxyPrefix(value string) (netip.Prefix, error) {

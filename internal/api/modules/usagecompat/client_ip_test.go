@@ -100,9 +100,12 @@ func TestSQLiteDetailStoreMigratesClientIPColumn(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.db.Close() })
 	inserted, err := store.Insert("sk-test", "gpt-test", RequestDetail{
-		Timestamp: time.Date(2026, 7, 23, 1, 2, 3, 0, time.UTC),
-		ClientIP:  "198.51.100.9",
-		Tokens:    TokenStats{TotalTokens: 1},
+		Timestamp:    time.Date(2026, 7, 23, 1, 2, 3, 0, time.UTC),
+		ClientIP:     "198.51.100.9",
+		ServiceTier:  "fast",
+		AppliedTier:  "priority",
+		ResponseTier: "priority",
+		Tokens:       TokenStats{TotalTokens: 1},
 	})
 	if err != nil || !inserted {
 		t.Fatalf("Insert() = %v, %v, want true, nil", inserted, err)
@@ -113,6 +116,9 @@ func TestSQLiteDetailStoreMigratesClientIPColumn(t *testing.T) {
 	}
 	if len(page.Items) != 1 || page.Items[0].ClientIP != "198.51.100.9" {
 		t.Fatalf("Page() items = %#v, want migrated client IP", page.Items)
+	}
+	if item := page.Items[0]; item.ServiceTier != "fast" || item.AppliedTier != "priority" || item.ResponseTier != "priority" {
+		t.Fatalf("Page() service tiers = %#v", item)
 	}
 }
 

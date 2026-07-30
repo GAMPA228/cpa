@@ -594,6 +594,9 @@ func TestUsageReporterSetTranslatedReasoningEffortPreservesClientServiceTier(t *
 	if record.ServiceTier != "auto" {
 		t.Fatalf("service tier = %q, want %q", record.ServiceTier, "auto")
 	}
+	if record.AppliedServiceTier != "priority" {
+		t.Fatalf("applied service tier = %q, want %q", record.AppliedServiceTier, "priority")
+	}
 }
 
 func TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens(t *testing.T) {

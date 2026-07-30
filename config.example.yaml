@@ -297,6 +297,21 @@ thinking-policy:
     # Historical field name; now means higher-than-high reasoning whitelist.
     xhigh-api-keys: []
 
+# Native Codex Fast/priority service tier policy. When enabled, both the effective
+# upstream model and authenticated downstream API key must match the whitelist.
+# Incoming "fast" is accepted as an alias and sent upstream as "priority".
+service-tier-policy:
+  codex:
+    enabled: false
+    # Exact names and * / ? wildcards are supported. Use "*" for all models.
+    allowed-models: []
+    allowed-api-keys: []
+    # request-only: enable priority only when requested; force-priority: force it for authorized requests.
+    authorized-mode: "request-only"
+    # strip: silently use the standard tier; reject: return HTTP 403.
+    unauthorized-action: "strip"
+    reject-message: "Fast 模式未授权，请联系管理员"
+
 # When true, enable authentication for the WebSocket API (/v1/ws).
 ws-auth: true
 

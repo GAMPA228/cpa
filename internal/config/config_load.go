@@ -186,6 +186,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Normalize server-side thinking policy.
 	cfg.SanitizeThinkingPolicy()
 
+	// Normalize server-side Codex service tier policy.
+	cfg.SanitizeServiceTierPolicy()
+
 	// Normalize downstream API key based model rewrite rules.
 	cfg.SanitizeModelRewrite()
 
