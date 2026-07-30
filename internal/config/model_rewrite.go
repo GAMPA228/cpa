@@ -25,6 +25,7 @@ func (cfg *SDKConfig) SanitizeModelRewrite() {
 		}
 		rule.TargetThinkingEffort = normalizeModelRewriteThinkingEffort(rule.TargetThinkingEffort)
 		rule.BypassAPIKeys = sanitizeModelRewriteStringList(rule.BypassAPIKeys, false)
+		rule.BypassGroups = sanitizeAPIKeyGroupReferences(rule.BypassGroups)
 		out = append(out, rule)
 	}
 	cfg.ModelRewrite.Rules = out
@@ -78,7 +79,7 @@ func (cfg *SDKConfig) RewriteModelForAPIKeyWithOptions(userAPIKey, model string)
 		if !modelRewriteRuleMatches(rule, model) {
 			continue
 		}
-		if modelRewriteBypassAPIKey(rule.BypassAPIKeys, userAPIKey) {
+		if cfg.APIKeyMatchesPolicy(userAPIKey, rule.BypassAPIKeys, rule.BypassGroups) {
 			return ModelRewriteResult{Model: model}, false
 		}
 		targetThinkingEffort := normalizeModelRewriteThinkingEffort(rule.TargetThinkingEffort)
@@ -101,19 +102,6 @@ func modelRewriteRuleMatches(rule ModelRewriteRule, model string) bool {
 			if modelRewriteWildcardMatch(pattern, candidate) {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func modelRewriteBypassAPIKey(keys []string, userAPIKey string) bool {
-	userAPIKey = strings.TrimSpace(userAPIKey)
-	if userAPIKey == "" {
-		return false
-	}
-	for _, key := range keys {
-		if strings.TrimSpace(key) == userAPIKey {
-			return true
 		}
 	}
 	return false

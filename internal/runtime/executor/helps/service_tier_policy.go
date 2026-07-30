@@ -57,7 +57,7 @@ func ApplyCodexServiceTierPolicy(cfg *config.Config, model string, payload []byt
 	policy := cfg.ServiceTierPolicy.Codex
 	requestedTier := codexRequestedServiceTier(payload, opts)
 	priorityRequested := requestedTier == "fast" || requestedTier == codexPriorityServiceTier
-	authorized := policy.Allows(model, UserAPIKeyFromOptions(opts))
+	authorized := cfg.CodexServiceTierAllows(model, UserAPIKeyFromOptions(opts))
 
 	if authorized {
 		if policy.AuthorizedMode == config.CodexServiceTierAuthorizedForcePriority || priorityRequested {

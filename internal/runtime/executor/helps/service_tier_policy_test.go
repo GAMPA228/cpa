@@ -42,6 +42,27 @@ func TestApplyCodexServiceTierPolicyAllowsFastAlias(t *testing.T) {
 	}
 }
 
+func TestApplyCodexServiceTierPolicyAllowsGroupMember(t *testing.T) {
+	cfg := serviceTierPolicyTestConfig()
+	cfg.ServiceTierPolicy.Codex.AllowedAPIKeys = nil
+	cfg.ServiceTierPolicy.Codex.AllowedGroups = []string{"fast-users"}
+	cfg.APIKeyGroups = []config.APIKeyGroup{{ID: "fast-users", APIKeys: []string{"sk-group-member"}}}
+	cfg.SanitizeAPIKeyGroups()
+
+	payload, err := ApplyCodexServiceTierPolicy(
+		cfg,
+		"gpt-5.6-sol",
+		[]byte(`{"model":"gpt-5.6-sol"}`),
+		serviceTierPolicyOptions("sk-group-member", "fast"),
+	)
+	if err != nil {
+		t.Fatalf("ApplyCodexServiceTierPolicy() error = %v", err)
+	}
+	if got := gjson.GetBytes(payload, "service_tier").String(); got != "priority" {
+		t.Fatalf("service_tier = %q, want priority; payload=%s", got, payload)
+	}
+}
+
 func TestApplyCodexServiceTierPolicyStripsUnauthorizedPriority(t *testing.T) {
 	payload, err := ApplyCodexServiceTierPolicy(
 		serviceTierPolicyTestConfig(),

@@ -95,6 +95,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 
 	// Apply the same sanitization pipeline.
 	cfg.SanitizeAPIKeyEntries()
+	cfg.SanitizeAPIKeyGroups()
 	cfg.SanitizeGeminiKeys()
 	cfg.SanitizeInteractionsKeys()
 	cfg.SanitizeVertexCompatKeys()

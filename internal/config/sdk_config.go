@@ -54,6 +54,12 @@ type SDKConfig struct {
 	// APIKeyEntries stores optional management metadata for downstream API keys.
 	APIKeyEntries APIKeyEntryList `yaml:"api-keys,omitempty" json:"api-key-entries,omitempty"`
 
+	// APIKeyGroups stores reusable downstream API key membership sets for policy configuration.
+	APIKeyGroups []APIKeyGroup `yaml:"api-key-groups,omitempty" json:"api-key-groups,omitempty"`
+
+	// APIKeyGroupIndex is a runtime-only membership index populated during config sanitization.
+	APIKeyGroupIndex map[string]map[string]struct{} `yaml:"-" json:"-"`
+
 	// ModelRewrite configures downstream API key based OpenAI-compatible model rewrites.
 	ModelRewrite ModelRewriteConfig `yaml:"model-rewrite" json:"model-rewrite"`
 
@@ -91,6 +97,7 @@ type ModelRewriteRule struct {
 	TargetModel          string   `yaml:"target-model" json:"target-model"`
 	TargetThinkingEffort string   `yaml:"target-thinking-effort,omitempty" json:"target-thinking-effort,omitempty"`
 	BypassAPIKeys        []string `yaml:"bypass-api-keys" json:"bypass-api-keys"`
+	BypassGroups         []string `yaml:"bypass-groups,omitempty" json:"bypass-groups,omitempty"`
 }
 
 // StreamingConfig holds server streaming behavior configuration.

@@ -21,6 +21,7 @@ type CodexThinkingPolicyConfig struct {
 	Enabled       bool     `yaml:"enabled" json:"enabled"`
 	DefaultEffort string   `yaml:"default-effort" json:"default-effort"`
 	XHighAPIKeys  []string `yaml:"xhigh-api-keys" json:"xhigh-api-keys"`
+	XHighGroups   []string `yaml:"xhigh-groups,omitempty" json:"xhigh-groups,omitempty"`
 }
 
 // SanitizeThinkingPolicy normalizes server-side thinking policy settings.
@@ -30,6 +31,7 @@ func (cfg *Config) SanitizeThinkingPolicy() {
 	}
 	policy := &cfg.ThinkingPolicy.Codex
 	policy.DefaultEffort = normalizeCodexThinkingPolicyDefaultEffort(policy.DefaultEffort)
+	policy.XHighGroups = sanitizeAPIKeyGroupReferences(policy.XHighGroups)
 	if len(policy.XHighAPIKeys) == 0 {
 		return
 	}

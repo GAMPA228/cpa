@@ -44,9 +44,19 @@ api-keys:
     daily-token-limit: 100000000
   - "your-api-key-3"
 
+# Reusable downstream API key groups. Policies may combine group references with
+# direct API key entries; a key matching either source is authorized by that policy.
+api-key-groups:
+  - id: "core-developers"
+    name: "Core developers"
+    description: "Shared elevated-access group"
+    api-keys:
+      - "your-api-key-2"
+
 # OpenAI-compatible model rewrite rules. All models remain visible in /models.
 # Matching requests are rewritten to target-model unless the downstream API key
-# is listed in bypass-api-keys. Rules are evaluated in order; first match wins.
+# is listed directly in bypass-api-keys or belongs to bypass-groups.
+# Rules are evaluated in order; first match wins.
 # match-models supports * and ? wildcards.
 # target-thinking-effort is optional; use it when the source model can request a
 # reasoning level that the target model does not support (low/medium/high/xhigh/max/ultra).
@@ -59,6 +69,8 @@ model-rewrite:
     #   target-thinking-effort: "high"
     #   bypass-api-keys:
     #     - "your-whitelisted-api-key"
+    #   bypass-groups:
+    #     - "core-developers"
     # - match-models:
     #     - "gpt-5.6"
     #   target-model: "gpt-5.4"
@@ -296,6 +308,7 @@ thinking-policy:
     default-effort: "high"
     # Historical field name; now means higher-than-high reasoning whitelist.
     xhigh-api-keys: []
+    xhigh-groups: []
 
 # Native Codex Fast/priority service tier policy. When enabled, both the effective
 # upstream model and authenticated downstream API key must match the whitelist.
@@ -306,6 +319,7 @@ service-tier-policy:
     # Exact names and * / ? wildcards are supported. Use "*" for all models.
     allowed-models: []
     allowed-api-keys: []
+    allowed-groups: []
     # request-only: enable priority only when requested; force-priority: force it for authorized requests.
     authorized-mode: "request-only"
     # strip: silently use the standard tier; reject: return HTTP 403.

@@ -31,7 +31,7 @@ func ApplyCodexThinkingPolicy(cfg *config.Config, payload []byte, opts cliproxye
 	switch effort {
 	case codexThinkingEffortLow, codexThinkingEffortMedium, codexThinkingEffortHigh:
 	case codexThinkingEffortXHigh, codexThinkingEffortMax, codexThinkingEffortUltra:
-		if !codexPolicyAllowsHighReasoning(cfg.ThinkingPolicy.Codex, UserAPIKeyFromOptions(opts)) {
+		if !codexPolicyAllowsHighReasoning(cfg, UserAPIKeyFromOptions(opts)) {
 			effort = codexThinkingEffortHigh
 		}
 	default:
@@ -64,17 +64,12 @@ func UserAPIKeyFromOptions(opts cliproxyexecutor.Options) string {
 	return strings.TrimSpace(apiKey)
 }
 
-func codexPolicyAllowsHighReasoning(policy config.CodexThinkingPolicyConfig, userAPIKey string) bool {
-	userAPIKey = strings.TrimSpace(userAPIKey)
-	if userAPIKey == "" {
+func codexPolicyAllowsHighReasoning(cfg *config.Config, userAPIKey string) bool {
+	if cfg == nil {
 		return false
 	}
-	for _, allowed := range policy.XHighAPIKeys {
-		if strings.TrimSpace(allowed) == userAPIKey {
-			return true
-		}
-	}
-	return false
+	policy := cfg.ThinkingPolicy.Codex
+	return cfg.APIKeyMatchesPolicy(userAPIKey, policy.XHighAPIKeys, policy.XHighGroups)
 }
 
 func codexPayloadReasoningEffort(payload []byte) string {

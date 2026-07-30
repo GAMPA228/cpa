@@ -44,6 +44,26 @@ func TestApplyCodexThinkingPolicyAllowsRequestedHighReasoningForWhitelistedKey(t
 	}
 }
 
+func TestApplyCodexThinkingPolicyAllowsRequestedHighReasoningForGroupMember(t *testing.T) {
+	cfg := &config.Config{
+		SDKConfig: config.SDKConfig{APIKeyGroups: []config.APIKeyGroup{
+			{ID: "core-developers", APIKeys: []string{"sk-group-member"}},
+		}},
+		ThinkingPolicy: config.ThinkingPolicyConfig{Codex: config.CodexThinkingPolicyConfig{
+			Enabled:       true,
+			DefaultEffort: "high",
+			XHighGroups:   []string{"core-developers"},
+		}},
+	}
+	cfg.SanitizeAPIKeyGroups()
+	payload := ApplyCodexThinkingPolicy(cfg, []byte(`{"reasoning":{"effort":"ultra"}}`), cliproxyexecutor.Options{Metadata: map[string]any{
+		cliproxyexecutor.UserAPIKeyMetadataKey: "sk-group-member",
+	}})
+	if got := gjson.GetBytes(payload, "reasoning.effort").String(); got != "ultra" {
+		t.Fatalf("effort = %q, want ultra", got)
+	}
+}
+
 func TestApplyCodexThinkingPolicyPreservesSupportedEfforts(t *testing.T) {
 	cfg := &config.Config{ThinkingPolicy: config.ThinkingPolicyConfig{Codex: config.CodexThinkingPolicyConfig{
 		Enabled:       true,

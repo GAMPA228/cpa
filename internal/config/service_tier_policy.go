@@ -25,6 +25,7 @@ type CodexServiceTierPolicyConfig struct {
 	Enabled            bool     `yaml:"enabled" json:"enabled"`
 	AllowedModels      []string `yaml:"allowed-models" json:"allowed-models"`
 	AllowedAPIKeys     []string `yaml:"allowed-api-keys" json:"allowed-api-keys"`
+	AllowedGroups      []string `yaml:"allowed-groups,omitempty" json:"allowed-groups,omitempty"`
 	AuthorizedMode     string   `yaml:"authorized-mode" json:"authorized-mode"`
 	UnauthorizedAction string   `yaml:"unauthorized-action" json:"unauthorized-action"`
 	RejectMessage      string   `yaml:"reject-message" json:"reject-message"`
@@ -39,6 +40,7 @@ func (cfg *Config) SanitizeServiceTierPolicy() {
 	policy := &cfg.ServiceTierPolicy.Codex
 	policy.AllowedModels = sanitizeModelRewriteStringList(policy.AllowedModels, true)
 	policy.AllowedAPIKeys = sanitizeModelRewriteStringList(policy.AllowedAPIKeys, false)
+	policy.AllowedGroups = sanitizeAPIKeyGroupReferences(policy.AllowedGroups)
 
 	switch strings.ToLower(strings.TrimSpace(policy.AuthorizedMode)) {
 	case CodexServiceTierAuthorizedForcePriority:
@@ -60,10 +62,22 @@ func (cfg *Config) SanitizeServiceTierPolicy() {
 	}
 }
 
+// CodexServiceTierAllows reports whether the model and downstream API key or group are authorized.
+func (cfg *Config) CodexServiceTierAllows(model, userAPIKey string) bool {
+	if cfg == nil {
+		return false
+	}
+	policy := cfg.ServiceTierPolicy.Codex
+	if !policy.allowsModel(model) {
+		return false
+	}
+	return cfg.APIKeyMatchesPolicy(userAPIKey, policy.AllowedAPIKeys, policy.AllowedGroups)
+}
+
 // Allows reports whether the effective model and downstream API key both match the whitelist.
 func (policy CodexServiceTierPolicyConfig) Allows(model, userAPIKey string) bool {
 	userAPIKey = strings.TrimSpace(userAPIKey)
-	if userAPIKey == "" || len(policy.AllowedModels) == 0 || len(policy.AllowedAPIKeys) == 0 {
+	if userAPIKey == "" || !policy.allowsModel(model) {
 		return false
 	}
 
@@ -74,10 +88,10 @@ func (policy CodexServiceTierPolicyConfig) Allows(model, userAPIKey string) bool
 			break
 		}
 	}
-	if !keyAllowed {
-		return false
-	}
+	return keyAllowed
+}
 
+func (policy CodexServiceTierPolicyConfig) allowsModel(model string) bool {
 	for _, pattern := range policy.AllowedModels {
 		for _, candidate := range modelRewriteCandidates(model) {
 			if modelRewriteWildcardMatch(pattern, candidate) {

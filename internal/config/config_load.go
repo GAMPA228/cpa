@@ -150,6 +150,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Normalize downstream API keys while preserving optional management remarks.
 	cfg.SanitizeAPIKeyEntries()
 
+	// Normalize reusable downstream API key groups and build their runtime index.
+	cfg.SanitizeAPIKeyGroups()
+
 	// Sanitize Gemini API key configuration and migrate legacy entries.
 	cfg.SanitizeGeminiKeys()
 
