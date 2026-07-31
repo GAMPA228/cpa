@@ -472,10 +472,10 @@ func (h *BaseAPIHandler) applyRequestInterceptorsAfterAuth(ctx context.Context, 
 	}
 }
 
-func (h *BaseAPIHandler) applyResponseInterceptors(ctx context.Context, requestID, handlerType, normalizedModel, requestedModel string, opts coreexecutor.Options, rawResponseHeaders, responseHeaders http.Header, originalRequest, requestBody, body []byte, statusCode int, skipPluginID string) ([]byte, http.Header) {
+func (h *BaseAPIHandler) applyResponseInterceptors(ctx context.Context, requestID, handlerType, normalizedModel, requestedModel string, opts coreexecutor.Options, rawResponseHeaders, responseHeaders http.Header, originalRequest, requestBody, body []byte, statusCode int, skipPluginID string, modelRewriteEnabled bool) ([]byte, http.Header) {
 	host := h.interceptorHost()
 	if host == nil {
-		return body, responseHeaders
+		return cloakModelRewriteResponse(body, requestedModel, normalizedModel, modelRewriteEnabled), responseHeaders
 	}
 	resp := interceptResponse(ctx, host, pluginapi.ResponseInterceptRequest{
 		RequestID:       requestID,
@@ -495,5 +495,5 @@ func (h *BaseAPIHandler) applyResponseInterceptors(ctx context.Context, requestI
 	if len(resp.Body) > 0 {
 		body = cloneBytes(resp.Body)
 	}
-	return body, responseHeaders
+	return cloakModelRewriteResponse(body, requestedModel, normalizedModel, modelRewriteEnabled), responseHeaders
 }

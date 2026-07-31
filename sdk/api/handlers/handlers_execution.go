@@ -41,17 +41,18 @@ func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType
 func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	originalRequestedModel := modelName
 	modelName, rawJSON = h.applyModelRewrite(ctx, entryProtocol, modelName, rawJSON)
+	modelRewriteEnabled := modelRewriteApplied(originalRequestedModel, modelName)
 	routeDecision := h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, false, execOptions)
 	responseProtocol := modelExecutionResponseProtocol(entryProtocol, exitProtocol)
 	if errMsg := validateNativeInteractionsExecution(entryProtocol, execOptions, routeDecision); errMsg != nil {
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	if routeDecision.ExecutorPluginID != "" {
 		return h.executeWithPluginExecutor(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
 	}
 	providers, normalizedModel, errMsg := h.providersForExecution(modelName, originalRequestedModel, allowImageModel, routeDecision, execOptions)
 	if errMsg != nil {
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(entryProtocol, providers)
 	reqMeta := requestExecutionMetadata(ctx)
@@ -86,19 +87,19 @@ func (h *BaseAPIHandler) executeWithAuthManagerFormats(ctx context.Context, entr
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
-		return nil, nil, interceptErr
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 	}
 	resp, err := h.AuthManager.Execute(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
 		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 	}
 	executedReq, executedOpts := afterAuthCapture.apply(req, opts)
 	rawResponseHeaders := cloneHeader(resp.Headers)
 	responseHeaders := downstreamHeadersFromExecutor(rawResponseHeaders, PassthroughHeadersEnabled(h.Cfg))
-	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), responseProtocol, normalizedModel, originalRequestedModel, executedOpts, rawResponseHeaders, responseHeaders, executedOpts.OriginalRequest, executedReq.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID)
+	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), responseProtocol, normalizedModel, originalRequestedModel, executedOpts, rawResponseHeaders, responseHeaders, executedOpts.OriginalRequest, executedReq.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID, modelRewriteEnabled)
 	lifecycle.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
 	return body, responseHeaders, nil
 }
@@ -112,13 +113,14 @@ func (h *BaseAPIHandler) ExecuteCountWithAuthManager(ctx context.Context, handle
 func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	originalRequestedModel := modelName
 	modelName, rawJSON = h.applyModelRewrite(ctx, handlerType, modelName, rawJSON)
+	modelRewriteEnabled := modelRewriteApplied(originalRequestedModel, modelName)
 	routeDecision := h.applyModelRouter(ctx, handlerType, modelName, rawJSON, false, execOptions)
 	if routeDecision.ExecutorPluginID != "" {
 		return h.countWithPluginExecutor(ctx, handlerType, modelName, originalRequestedModel, rawJSON, alt, routeDecision.ExecutorPluginID, execOptions)
 	}
 	providers, normalizedModel, errMsg := h.providersForExecution(modelName, originalRequestedModel, false, routeDecision, execOptions)
 	if errMsg != nil {
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	providers = adjustExecutionProvidersForEntryProtocol(handlerType, providers)
 	reqMeta := requestExecutionMetadata(ctx)
@@ -151,30 +153,33 @@ func (h *BaseAPIHandler) executeCountWithAuthManager(ctx context.Context, handle
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, handlerType, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
-		return nil, nil, interceptErr
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 	}
 	resp, err := h.AuthManager.ExecuteCount(ctx, providers, req, opts)
 	if err != nil {
 		err = enrichAuthSelectionError(err, providers, normalizedModel)
 		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 	}
 	executedReq, executedOpts := afterAuthCapture.apply(req, opts)
 	rawResponseHeaders := cloneHeader(resp.Headers)
 	responseHeaders := downstreamHeadersFromExecutor(rawResponseHeaders, PassthroughHeadersEnabled(h.Cfg))
-	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), handlerType, normalizedModel, originalRequestedModel, executedOpts, rawResponseHeaders, responseHeaders, executedOpts.OriginalRequest, executedReq.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID)
+	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), handlerType, normalizedModel, originalRequestedModel, executedOpts, rawResponseHeaders, responseHeaders, executedOpts.OriginalRequest, executedReq.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID, modelRewriteEnabled)
 	lifecycle.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
 	return body, responseHeaders, nil
 }
 
 func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryProtocol, responseProtocol, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	modelRewriteEnabled := modelRewriteApplied(originalRequestedModel, modelName)
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
-		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
+		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	host := h.pluginExecutorHost()
 	if host == nil {
-		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
+		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	req, opts := h.pluginExecutorRequest(ctx, entryProtocol, responseProtocol, modelName, originalRequestedModel, rawJSON, alt, false, execOptions)
 	lifecycle := h.newRequestLifecycleTracker(ctx, entryProtocol, modelName, originalRequestedModel, false, opts.Metadata, execOptions.SkipInterceptorPluginID)
@@ -182,33 +187,36 @@ func (h *BaseAPIHandler) executeWithPluginExecutor(ctx context.Context, entryPro
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
-		return nil, nil, interceptErr
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	req, opts, interceptErr = h.applyRequestInterceptorsAfterPluginExecutorRoute(ctx, host, executorPluginID, entryProtocol, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
-		return nil, nil, interceptErr
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	resp, errExecute := host.ExecutePluginExecutor(ctx, executorPluginID, req, opts)
 	if errExecute != nil {
 		errMsg := executionErrorMessage(errExecute)
 		lifecycle.completeError(ctx, errMsg)
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	rawResponseHeaders := cloneHeader(resp.Headers)
 	responseHeaders := downstreamHeadersFromExecutor(rawResponseHeaders, PassthroughHeadersEnabled(h.Cfg))
-	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), responseProtocol, modelName, originalRequestedModel, opts, rawResponseHeaders, responseHeaders, opts.OriginalRequest, req.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID)
+	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), responseProtocol, modelName, originalRequestedModel, opts, rawResponseHeaders, responseHeaders, opts.OriginalRequest, req.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID, modelRewriteEnabled)
 	lifecycle.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
 	return body, responseHeaders, nil
 }
 
 func (h *BaseAPIHandler) countWithPluginExecutor(ctx context.Context, handlerType, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	modelRewriteEnabled := modelRewriteApplied(originalRequestedModel, modelName)
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
-		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
+		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	host := h.pluginExecutorHost()
 	if host == nil {
-		return nil, nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
+		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	req, opts := h.pluginExecutorRequest(ctx, handlerType, handlerType, modelName, originalRequestedModel, rawJSON, alt, false, execOptions)
 	lifecycle := h.newRequestLifecycleTracker(ctx, handlerType, modelName, originalRequestedModel, false, opts.Metadata, execOptions.SkipInterceptorPluginID)
@@ -216,22 +224,22 @@ func (h *BaseAPIHandler) countWithPluginExecutor(ctx context.Context, handlerTyp
 	req, opts, interceptErr = h.applyRequestInterceptorsBeforeAuth(ctx, handlerType, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
-		return nil, nil, interceptErr
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	req, opts, interceptErr = h.applyRequestInterceptorsAfterPluginExecutorRoute(ctx, host, executorPluginID, handlerType, originalRequestedModel, lifecycle.requestID(), req, opts, execOptions.SkipInterceptorPluginID)
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
-		return nil, nil, interceptErr
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	resp, errCount := host.CountPluginExecutor(ctx, executorPluginID, req, opts)
 	if errCount != nil {
 		errMsg := executionErrorMessage(errCount)
 		lifecycle.completeError(ctx, errMsg)
-		return nil, nil, errMsg
+		return nil, nil, sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 	}
 	rawResponseHeaders := cloneHeader(resp.Headers)
 	responseHeaders := downstreamHeadersFromExecutor(rawResponseHeaders, PassthroughHeadersEnabled(h.Cfg))
-	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), handlerType, modelName, originalRequestedModel, opts, rawResponseHeaders, responseHeaders, opts.OriginalRequest, req.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID)
+	body, responseHeaders := h.applyResponseInterceptors(ctx, lifecycle.requestID(), handlerType, modelName, originalRequestedModel, opts, rawResponseHeaders, responseHeaders, opts.OriginalRequest, req.Payload, resp.Payload, http.StatusOK, execOptions.SkipInterceptorPluginID, modelRewriteEnabled)
 	lifecycle.complete(pluginapi.RequestCompletionSucceeded, http.StatusOK, nil)
 	return body, responseHeaders, nil
 }

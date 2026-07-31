@@ -26,16 +26,19 @@ func (h *BaseAPIHandler) ExecuteImageStreamWithAuthManager(ctx context.Context, 
 }
 
 func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProtocol, responseProtocol, modelName, originalRequestedModel string, rawJSON []byte, alt, executorPluginID string, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
+	modelRewriteEnabled := modelRewriteApplied(originalRequestedModel, modelName)
 	if h.AuthManager != nil && h.AuthManager.HomeEnabled() {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
+		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusServiceUnavailable, Error: fmt.Errorf("plugin executor routing is unavailable while Home is enabled")}
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
 	host := h.pluginExecutorHost()
 	if host == nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
+		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor host is unavailable")}
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -46,7 +49,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- interceptErr
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -54,7 +57,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- interceptErr
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -63,7 +66,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		errMsg := executionErrorMessage(errStream)
 		lifecycle.completeError(ctx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- errMsg
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -71,7 +74,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("plugin executor returned nil stream")}
 		lifecycle.completeError(ctx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- errMsg
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -146,7 +149,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 				completionStatus = errMsg.StatusCode
 				completionErr = chunk.Err
 				select {
-				case errChan <- errMsg:
+				case errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled):
 				case <-done:
 					completionOutcome = pluginapi.RequestCompletionCanceled
 					completionStatus = 0
@@ -192,7 +195,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 					completionStatus = http.StatusBadGateway
 					completionErr = errValidate
 					select {
-					case errChan <- &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errValidate}:
+					case errChan <- sanitizeModelRewriteErrorMessage(ctx, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errValidate}, originalRequestedModel, modelName, modelRewriteEnabled):
 					case <-done:
 						completionOutcome = pluginapi.RequestCompletionCanceled
 						completionStatus = 0
@@ -203,6 +206,7 @@ func (h *BaseAPIHandler) streamWithPluginExecutor(ctx context.Context, entryProt
 					return
 				}
 			}
+			payload = cloakModelRewriteResponse(payload, originalRequestedModel, modelName, modelRewriteEnabled)
 			select {
 			case dataChan <- payload:
 				if streamInterceptorsActive {
@@ -228,6 +232,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManager(ctx context.Context, handl
 func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context, entryProtocol, exitProtocol, modelName string, rawJSON []byte, alt string, allowImageModel bool, execOptions modelExecutionOptions) (<-chan []byte, http.Header, <-chan *interfaces.ErrorMessage) {
 	originalRequestedModel := modelName
 	modelName, rawJSON = h.applyModelRewrite(ctx, entryProtocol, modelName, rawJSON)
+	modelRewriteEnabled := modelRewriteApplied(originalRequestedModel, modelName)
 	routeDecision, preparedRoute := preparedModelRouteFromContext(ctx)
 	if !preparedRoute {
 		routeDecision = h.applyModelRouter(ctx, entryProtocol, modelName, rawJSON, true, execOptions)
@@ -235,7 +240,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	responseProtocol := modelExecutionResponseProtocol(entryProtocol, exitProtocol)
 	if errMsg := validateNativeInteractionsExecution(entryProtocol, execOptions, routeDecision); errMsg != nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- errMsg
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -245,7 +250,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	providers, normalizedModel, errMsg := h.providersForExecution(modelName, originalRequestedModel, allowImageModel, routeDecision, execOptions)
 	if errMsg != nil {
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- errMsg
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, modelName, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -283,7 +288,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 	if interceptErr != nil {
 		lifecycle.completeError(ctx, interceptErr)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- interceptErr
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, interceptErr, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -293,7 +298,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		errMsg := executionErrorMessage(err)
 		lifecycle.completeError(ctx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- errMsg
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -301,7 +306,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 		errMsg := &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: fmt.Errorf("auth manager returned nil stream")}
 		lifecycle.completeError(ctx, errMsg)
 		errChan := make(chan *interfaces.ErrorMessage, 1)
-		errChan <- errMsg
+		errChan <- sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 		close(errChan)
 		return nil, nil, errChan
 	}
@@ -385,6 +390,7 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				return nil, false, &interfaces.ErrorMessage{StatusCode: http.StatusBadGateway, Error: errValidate}
 			}
 		}
+		payload = cloakModelRewriteResponse(payload, originalRequestedModel, normalizedModel, modelRewriteEnabled)
 		return payload, true, nil
 	}
 
@@ -548,7 +554,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 			}
 			completionStatus = bootstrapErr.StatusCode
 			completionErr = bootstrapErr.Error
-			if !sendErr(bootstrapErr) && ctx != nil && ctx.Err() != nil {
+			publicBootstrapErr := sanitizeModelRewriteErrorMessage(ctx, bootstrapErr, originalRequestedModel, normalizedModel, modelRewriteEnabled)
+			if !sendErr(publicBootstrapErr) && ctx != nil && ctx.Err() != nil {
 				completionOutcome = pluginapi.RequestCompletionCanceled
 				completionStatus = 0
 				completionErr = ctx.Err()
@@ -589,7 +596,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
 				completionErr = chunk.Err
-				if !sendErr(errMsg) && ctx != nil && ctx.Err() != nil {
+				publicErrMsg := sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, normalizedModel, modelRewriteEnabled)
+				if !sendErr(publicErrMsg) && ctx != nil && ctx.Err() != nil {
 					completionOutcome = pluginapi.RequestCompletionCanceled
 					completionStatus = 0
 					completionErr = ctx.Err()
@@ -604,7 +612,8 @@ func (h *BaseAPIHandler) executeStreamWithAuthManagerFormats(ctx context.Context
 				completionOutcome = pluginapi.RequestCompletionFailed
 				completionStatus = errMsg.StatusCode
 				completionErr = errMsg.Error
-				if !sendErr(errMsg) && ctx != nil && ctx.Err() != nil {
+				publicErrMsg := sanitizeModelRewriteErrorMessage(ctx, errMsg, originalRequestedModel, normalizedModel, modelRewriteEnabled)
+				if !sendErr(publicErrMsg) && ctx != nil && ctx.Err() != nil {
 					completionOutcome = pluginapi.RequestCompletionCanceled
 					completionStatus = 0
 					completionErr = ctx.Err()

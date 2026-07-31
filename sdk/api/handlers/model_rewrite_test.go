@@ -2,12 +2,15 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	coreexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
@@ -31,6 +34,64 @@ func TestExecuteWithAuthManagerRewritesOpenAIModelForNonWhitelistedAPIKey(t *tes
 
 	gotReq, gotOpts := executor.captured()
 	assertModelRewriteApplied(t, gotReq, gotOpts, sourceModel, targetModel)
+}
+
+func TestExecuteWithAuthManagerCloaksRewrittenModelInResponse(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.6-terra"
+	executor := &modelExecutionCaptureExecutor{
+		execute: func(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+			return coreexecutor.Response{Payload: []byte(`{"model":"gpt-5.6-terra","response":{"model":"gpt-5.6-terra"}}`)}, nil
+		},
+	}
+	handler := newModelExecutionHandler(t, targetModel, executor, modelRewriteTestConfig(sourceModel, targetModel))
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"input":[]}`, sourceModel))
+	resp, _, errMsg := handler.ExecuteWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai-response", sourceModel, body, "")
+	if errMsg != nil {
+		t.Fatalf("ExecuteWithAuthManager() error = %+v", errMsg)
+	}
+	if got := gjson.GetBytes(resp, "model").String(); got != sourceModel {
+		t.Fatalf("response model = %q, want %q", got, sourceModel)
+	}
+	if got := gjson.GetBytes(resp, "response.model").String(); got != sourceModel {
+		t.Fatalf("nested response model = %q, want %q", got, sourceModel)
+	}
+	if strings.Contains(string(resp), targetModel) {
+		t.Fatalf("response leaked rewritten model: %s", resp)
+	}
+}
+
+func TestExecuteWithAuthManagerSanitizesRewrittenModelServiceError(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.6-terra"
+	executor := &modelExecutionCaptureExecutor{
+		execute: func(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (coreexecutor.Response, error) {
+			return coreexecutor.Response{}, &coreauth.Error{
+				Code:       "upstream_unavailable",
+				Message:    "provider=codex model=" + targetModel + " url=https://internal.example/v1/responses",
+				HTTPStatus: http.StatusServiceUnavailable,
+			}
+		},
+	}
+	handler := newModelExecutionHandler(t, targetModel, executor, modelRewriteTestConfig(sourceModel, targetModel))
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"input":[]}`, sourceModel))
+	_, _, errMsg := handler.ExecuteWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai-response", sourceModel, body, "")
+	if errMsg == nil || errMsg.Error == nil {
+		t.Fatal("ExecuteWithAuthManager() error = nil")
+	}
+	if errMsg.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", errMsg.StatusCode, http.StatusServiceUnavailable)
+	}
+	if got := errMsg.Error.Error(); got != modelRewriteServiceUnavailableBody {
+		t.Fatalf("public error = %q, want %q", got, modelRewriteServiceUnavailableBody)
+	}
+	for _, secret := range []string{targetModel, "codex", "internal.example"} {
+		if strings.Contains(errMsg.Error.Error(), secret) {
+			t.Fatalf("public error leaked %q: %s", secret, errMsg.Error)
+		}
+	}
 }
 
 func TestExecuteWithAuthManagerKeepsWhitelistedAPIKeyModel(t *testing.T) {
@@ -193,6 +254,138 @@ func TestExecuteStreamWithAuthManagerRewritesOpenAIModel(t *testing.T) {
 
 	gotReq, gotOpts := executor.captured()
 	assertModelRewriteApplied(t, gotReq, gotOpts, sourceModel, targetModel)
+}
+
+func TestExecuteStreamWithAuthManagerCloaksRewrittenModelInSSE(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.6-terra"
+	executor := &modelExecutionCaptureExecutor{
+		stream: func(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+			chunks := make(chan coreexecutor.StreamChunk, 1)
+			chunks <- coreexecutor.StreamChunk{Payload: []byte(`event: response.completed
+data: {"type":"response.completed","response":{"model":"gpt-5.6-terra","output":[]}}
+
+`)}
+			close(chunks)
+			return &coreexecutor.StreamResult{Chunks: chunks}, nil
+		},
+	}
+	handler := newModelExecutionHandler(t, targetModel, executor, modelRewriteTestConfig(sourceModel, targetModel))
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"stream":true}`, sourceModel))
+	dataChan, _, errChan := handler.ExecuteStreamWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai-response", sourceModel, body, "")
+	var response strings.Builder
+	for chunk := range dataChan {
+		response.Write(chunk)
+	}
+	for errMsg := range errChan {
+		if errMsg != nil {
+			t.Fatalf("ExecuteStreamWithAuthManager() error = %+v", errMsg)
+		}
+	}
+	if !strings.Contains(response.String(), `"model":"`+sourceModel+`"`) {
+		t.Fatalf("stream response missing requested model: %s", response.String())
+	}
+	if strings.Contains(response.String(), targetModel) {
+		t.Fatalf("stream response leaked rewritten model: %s", response.String())
+	}
+}
+
+func TestExecuteStreamWithAuthManagerSanitizesRewrittenModelBootstrapError(t *testing.T) {
+	sourceModel := "gpt-5.6-sol"
+	targetModel := "gpt-5.6-terra"
+	executor := &modelExecutionCaptureExecutor{
+		stream: func(context.Context, *coreauth.Auth, coreexecutor.Request, coreexecutor.Options) (*coreexecutor.StreamResult, error) {
+			return nil, &coreauth.Error{
+				Code:       "auth_unavailable",
+				Message:    "no auth available for " + targetModel,
+				HTTPStatus: http.StatusServiceUnavailable,
+			}
+		},
+	}
+	handler := newModelExecutionHandler(t, targetModel, executor, modelRewriteTestConfig(sourceModel, targetModel))
+
+	body := []byte(fmt.Sprintf(`{"model":%q,"stream":true}`, sourceModel))
+	dataChan, _, errChan := handler.ExecuteStreamWithAuthManager(modelRewriteContextWithAPIKey(t, "sk-user"), "openai-response", sourceModel, body, "")
+	if dataChan != nil {
+		for range dataChan {
+			t.Fatal("unexpected stream payload")
+		}
+	}
+	var gotErr *interfaces.ErrorMessage
+	for errMsg := range errChan {
+		if errMsg != nil {
+			gotErr = errMsg
+		}
+	}
+	if gotErr == nil || gotErr.Error == nil {
+		t.Fatal("stream error = nil")
+	}
+	if gotErr.StatusCode != http.StatusServiceUnavailable || gotErr.Error.Error() != modelRewriteServiceUnavailableBody {
+		t.Fatalf("stream error = status %d body %q", gotErr.StatusCode, gotErr.Error.Error())
+	}
+	if strings.Contains(gotErr.Error.Error(), targetModel) {
+		t.Fatalf("stream error leaked rewritten model: %s", gotErr.Error)
+	}
+}
+
+func TestCloakModelRewriteResponseWebsocketPayload(t *testing.T) {
+	payload := []byte(`{"type":"response.completed","response":{"model":"gpt-5.6-terra"}}`)
+	got := cloakModelRewriteResponse(payload, "gpt-5.6-sol", "gpt-5.6-terra", true)
+	if model := gjson.GetBytes(got, "response.model").String(); model != "gpt-5.6-sol" {
+		t.Fatalf("response.model = %q, want gpt-5.6-sol", model)
+	}
+	if strings.Contains(string(got), "gpt-5.6-terra") {
+		t.Fatalf("websocket payload leaked rewritten model: %s", got)
+	}
+}
+
+func TestCloakModelRewriteResponseWebsocketErrorPayload(t *testing.T) {
+	payload := []byte(`{"type":"error","error":{"message":"gpt-5.6-terra unavailable","model":"gpt-5.6-terra","provider":"codex","url":"https://internal.example"}}`)
+	got := cloakModelRewriteResponse(payload, "gpt-5.6-sol", "gpt-5.6-terra", true)
+	if model := gjson.GetBytes(got, "error.model").String(); model != "gpt-5.6-sol" {
+		t.Fatalf("error.model = %q, want gpt-5.6-sol", model)
+	}
+	for _, secret := range []string{"gpt-5.6-terra", "codex", "internal.example"} {
+		if strings.Contains(string(got), secret) {
+			t.Fatalf("websocket error payload leaked %q: %s", secret, got)
+		}
+	}
+}
+
+func TestSanitizeModelRewriteClientErrorPreservesDirectPolicyResponse(t *testing.T) {
+	original := &interfaces.ErrorMessage{
+		StatusCode:     http.StatusTooManyRequests,
+		DirectResponse: true,
+		Body:           []byte(`{"error":{"message":"出错了，请联系管理员"}}`),
+	}
+	got := sanitizeModelRewriteErrorMessage(context.Background(), original, "gpt-5.6-sol", "gpt-5.6-terra", true)
+	if got != original {
+		t.Fatal("direct policy response should remain unchanged")
+	}
+}
+
+func TestSanitizeModelRewriteClientErrorCloaksRateLimitDetails(t *testing.T) {
+	original := &interfaces.ErrorMessage{
+		StatusCode: http.StatusTooManyRequests,
+		Error:      errors.New(`{"error":{"code":"model_cooldown","model":"gpt-5.6-terra","provider":"codex","url":"https://internal.example","message":"gpt-5.6-terra is cooling down"}}`),
+	}
+	got := sanitizeModelRewriteErrorMessage(context.Background(), original, "gpt-5.6-sol", "gpt-5.6-terra", true)
+	if got == nil || got.Error == nil {
+		t.Fatal("sanitized error = nil")
+	}
+	if got.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want %d", got.StatusCode, http.StatusTooManyRequests)
+	}
+	body := got.Error.Error()
+	if model := gjson.Get(body, "error.model").String(); model != "gpt-5.6-sol" {
+		t.Fatalf("error.model = %q, want gpt-5.6-sol", model)
+	}
+	for _, secret := range []string{"gpt-5.6-terra", "codex", "internal.example"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("sanitized rate-limit error leaked %q: %s", secret, body)
+		}
+	}
 }
 
 func modelRewriteTestConfig(sourceModel, targetModel string) *sdkconfig.SDKConfig {
