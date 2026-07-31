@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -23,7 +24,9 @@ import (
 )
 
 const (
-	codexUserAgent             = "codex-tui/0.135.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.135.0)"
+	codexClientVersion         = "0.146.0"
+	codexMinimumClientVersion  = "0.144.0"
+	codexUserAgent             = "codex-tui/0.146.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.146.0)"
 	codexOriginator            = "codex-tui"
 	codexDefaultImageToolModel = "gpt-image-2"
 	codexResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
@@ -352,6 +355,66 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
+	applyCodexCloakingHeaders(r.Header, cfg)
+}
+
+func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config) {
+	if headers == nil || cfg == nil || cfg.Codex.DisableCodexCloaking {
+		return
+	}
+	headers.Set("User-Agent", codexUserAgent)
+	headers.Set("Originator", codexOriginator)
+
+	version := strings.TrimSpace(headers.Get("Version"))
+	if version != "" && !codexVersionAtLeast(version, codexMinimumClientVersion) {
+		headers.Set("Version", codexClientVersion)
+	}
+}
+
+func codexVersionAtLeast(version, minimum string) bool {
+	versionParts, okVersion := codexNumericVersionParts(version)
+	minimumParts, okMinimum := codexNumericVersionParts(minimum)
+	if !okVersion || !okMinimum {
+		return false
+	}
+	length := len(versionParts)
+	if len(minimumParts) > length {
+		length = len(minimumParts)
+	}
+	for index := 0; index < length; index++ {
+		versionPart := 0
+		minimumPart := 0
+		if index < len(versionParts) {
+			versionPart = versionParts[index]
+		}
+		if index < len(minimumParts) {
+			minimumPart = minimumParts[index]
+		}
+		if versionPart != minimumPart {
+			return versionPart > minimumPart
+		}
+	}
+	return true
+}
+
+func codexNumericVersionParts(version string) ([]int, bool) {
+	version = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(version, "v"), "V"))
+	if suffixIndex := strings.IndexAny(version, "-+"); suffixIndex >= 0 {
+		version = version[:suffixIndex]
+	}
+	if version == "" {
+		return nil, false
+	}
+	segments := strings.Split(version, ".")
+	parts := make([]int, len(segments))
+	for index, segment := range segments {
+		part, errParse := strconv.Atoi(segment)
+		if errParse != nil || part < 0 {
+			return nil, false
+		}
+		parts[index] = part
+	}
+	return parts, true
 }
 
 func normalizeCodexInstructions(body []byte) []byte {

@@ -1059,6 +1059,7 @@ func TestApplyCodexWebsocketHeadersCanonicalizesLegacyUnderscoreSessionHeader(t 
 
 func TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth(t *testing.T) {
 	cfg := &config.Config{
+		Codex: config.CodexConfig{DisableCodexCloaking: true},
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
 			UserAgent:    "my-codex-client/1.0",
 			BetaFeatures: "feature-a,feature-b",
@@ -1084,6 +1085,7 @@ func TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth(t *testing.T) {
 
 func TestApplyCodexWebsocketHeadersPrefersExistingHeadersOverClientAndConfig(t *testing.T) {
 	cfg := &config.Config{
+		Codex: config.CodexConfig{DisableCodexCloaking: true},
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
 			UserAgent:    "config-ua",
 			BetaFeatures: "config-beta",
@@ -1113,6 +1115,7 @@ func TestApplyCodexWebsocketHeadersPrefersExistingHeadersOverClientAndConfig(t *
 
 func TestApplyCodexWebsocketHeadersConfigUserAgentOverridesClientHeader(t *testing.T) {
 	cfg := &config.Config{
+		Codex: config.CodexConfig{DisableCodexCloaking: true},
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
 			UserAgent:    "config-ua",
 			BetaFeatures: "config-beta",
@@ -1134,6 +1137,36 @@ func TestApplyCodexWebsocketHeadersConfigUserAgentOverridesClientHeader(t *testi
 	}
 	if got := headers.Get("x-codex-beta-features"); got != "client-beta" {
 		t.Fatalf("x-codex-beta-features = %s, want %s", got, "client-beta")
+	}
+}
+
+func TestApplyCodexWebsocketHeadersForcesCurrentOAuthIdentity(t *testing.T) {
+	cfg := &config.Config{}
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{"email": "user@example.com"},
+		Attributes: map[string]string{
+			"header:User-Agent": "custom-client/0.1.0",
+			"header:Originator": "custom-client",
+			"header:Version":    "0.115.0-alpha.27",
+		},
+	}
+	ctx := contextWithGinHeaders(map[string]string{
+		"User-Agent": "downstream-client/0.1.0",
+		"Originator": "downstream-client",
+		"Version":    "0.115.0-alpha.27",
+	})
+
+	headers := applyCodexWebsocketHeaders(ctx, http.Header{}, auth, "oauth-token", cfg)
+
+	if got := headers.Get("User-Agent"); got != codexUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+	}
+	if got := headers.Get("Originator"); got != codexOriginator {
+		t.Fatalf("Originator = %q, want %q", got, codexOriginator)
+	}
+	if got := headers.Get("Version"); got != codexClientVersion {
+		t.Fatalf("Version = %q, want %q", got, codexClientVersion)
 	}
 }
 
@@ -1510,6 +1543,7 @@ func TestApplyCodexHeadersUsesConfigUserAgentForOAuth(t *testing.T) {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
 	cfg := &config.Config{
+		Codex: config.CodexConfig{DisableCodexCloaking: true},
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
 			UserAgent:    "config-ua",
 			BetaFeatures: "config-beta",
@@ -1530,6 +1564,76 @@ func TestApplyCodexHeadersUsesConfigUserAgentForOAuth(t *testing.T) {
 	}
 	if got := req.Header.Get("x-codex-beta-features"); got != "" {
 		t.Fatalf("x-codex-beta-features = %q, want empty", got)
+	}
+}
+
+func TestApplyCodexHeadersDefaultsToCurrentCodexIdentity(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
+	if err != nil {
+		t.Fatalf("NewRequest() error = %v", err)
+	}
+	cfg := &config.Config{}
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Attributes: map[string]string{
+			"header:User-Agent": "custom-client/0.1.0",
+			"header:Originator": "custom-client",
+			"header:Version":    "0.115.0-alpha.27",
+		},
+	}
+	ginHeaders := http.Header{
+		"User-Agent": []string{"downstream-client/0.1.0"},
+		"Originator": []string{"downstream-client"},
+		"Version":    []string{"0.115.0-alpha.27"},
+	}
+
+	applyCodexHeadersFromSources(req, auth, "oauth-token", false, cfg, ginHeaders)
+
+	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+	}
+	if got := req.Header.Get("Originator"); got != codexOriginator {
+		t.Fatalf("Originator = %q, want %q", got, codexOriginator)
+	}
+	if got := req.Header.Get("Version"); got != codexClientVersion {
+		t.Fatalf("Version = %q, want %q", got, codexClientVersion)
+	}
+}
+
+func TestApplyCodexCloakingHeadersNormalizesVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     string
+		wantVersion string
+	}{
+		{name: "absent", version: "", wantVersion: ""},
+		{name: "stale prerelease", version: "0.115.0-alpha.27", wantVersion: codexClientVersion},
+		{name: "minimum", version: codexMinimumClientVersion, wantVersion: codexMinimumClientVersion},
+		{name: "current prerelease", version: "0.146.0-alpha.3", wantVersion: "0.146.0-alpha.3"},
+		{name: "newer", version: "0.147.0", wantVersion: "0.147.0"},
+		{name: "invalid", version: "development", wantVersion: codexClientVersion},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			headers := http.Header{}
+			headers.Set("User-Agent", "old-client")
+			headers.Set("Originator", "old-client")
+			if test.version != "" {
+				headers.Set("Version", test.version)
+			}
+
+			applyCodexCloakingHeaders(headers, &config.Config{})
+
+			if got := headers.Get("User-Agent"); got != codexUserAgent {
+				t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+			}
+			if got := headers.Get("Originator"); got != codexOriginator {
+				t.Fatalf("Originator = %q, want %q", got, codexOriginator)
+			}
+			if got := headers.Get("Version"); got != test.wantVersion {
+				t.Fatalf("Version = %q, want %q", got, test.wantVersion)
+			}
+		})
 	}
 }
 
