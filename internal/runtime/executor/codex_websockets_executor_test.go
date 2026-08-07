@@ -974,8 +974,8 @@ func TestApplyCodexWebsocketHeadersDefaultsToCurrentResponsesBeta(t *testing.T) 
 	if !strings.HasPrefix(codexUserAgent, codexOriginator+"/") {
 		t.Fatalf("default Codex User-Agent = %s, want prefix %s/", codexUserAgent, codexOriginator)
 	}
-	if !strings.HasPrefix(codexUserAgent, "codex_cli_rs/") {
-		t.Fatalf("default Codex User-Agent = %s, want codex_cli_rs prefix", codexUserAgent)
+	if !strings.HasPrefix(codexUserAgent, "codex-tui/") {
+		t.Fatalf("default Codex User-Agent = %s, want codex-tui prefix", codexUserAgent)
 	}
 	if !strings.Contains(codexUserAgent, "xterm-256color") {
 		t.Fatalf("default Codex User-Agent = %s, want CLI terminal suffix", codexUserAgent)

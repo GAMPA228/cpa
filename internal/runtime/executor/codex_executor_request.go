@@ -24,8 +24,8 @@ import (
 
 const (
 	codexClientVersion         = "0.146.0"
-	codexUserAgent             = "codex_cli_rs/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
-	codexOriginator            = "codex_cli_rs"
+	codexUserAgent             = "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexOriginator            = "codex-tui"
 	codexDefaultImageToolModel = "gpt-image-2"
 	codexResponsesBetaHeader   = "responses=experimental"
 	codexRoutingHintHeader     = "X-Codex-Routing-Hint"

@@ -40,11 +40,12 @@ func TestCodexFastRequestKeepsCanonicalIdentityAfterModelOverride(t *testing.T) 
 	applyCodexHeaders(req, nil, "oauth-token", true, cfg)
 	applyModelHeaderOverrides(req.Header, "gpt-5.6-luna", cfg)
 
-	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
-		t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+	const wantUserAgent = "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	if got := req.Header.Get("User-Agent"); got != wantUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, wantUserAgent)
 	}
-	if got := req.Header.Get("Originator"); got != codexOriginator {
-		t.Fatalf("Originator = %q, want %q", got, codexOriginator)
+	if got := req.Header.Get("Originator"); got != "codex-tui" {
+		t.Fatalf("Originator = %q, want %q", got, "codex-tui")
 	}
 	if got := req.Header.Get("Version"); got != codexClientVersion {
 		t.Fatalf("Version = %q, want %q", got, codexClientVersion)
@@ -112,8 +113,16 @@ func TestApplyCodexRoutingHintHeaderRejectsInvalidValues(t *testing.T) {
 
 func TestCodexExecutorForwardsFastRoutingHintToOAuthUpstream(t *testing.T) {
 	var gotRoutingHint string
+	var gotUserAgent string
+	var gotOriginator string
+	var gotVersion string
+	var gotBeta string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotRoutingHint = r.Header.Get(codexRoutingHintHeader)
+		gotUserAgent = r.Header.Get("User-Agent")
+		gotOriginator = r.Header.Get("Originator")
+		gotVersion = r.Header.Get("Version")
+		gotBeta = r.Header.Get("OpenAI-Beta")
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[],\"service_tier\":\"priority\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"))
 	}))
@@ -149,5 +158,17 @@ func TestCodexExecutorForwardsFastRoutingHintToOAuthUpstream(t *testing.T) {
 	}
 	if gotRoutingHint != "model=gpt-5.5;tier=priority" {
 		t.Fatalf("%s = %q, want %q", codexRoutingHintHeader, gotRoutingHint, "model=gpt-5.5;tier=priority")
+	}
+	if gotUserAgent != "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color" {
+		t.Fatalf("User-Agent = %q, want canonical Codex TUI identity", gotUserAgent)
+	}
+	if gotOriginator != "codex-tui" {
+		t.Fatalf("Originator = %q, want codex-tui", gotOriginator)
+	}
+	if gotVersion != "0.146.0" {
+		t.Fatalf("Version = %q, want 0.146.0", gotVersion)
+	}
+	if gotBeta != "responses=experimental" {
+		t.Fatalf("OpenAI-Beta = %q, want responses=experimental", gotBeta)
 	}
 }
