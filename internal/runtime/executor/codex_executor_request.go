@@ -28,6 +28,7 @@ const (
 	codexOriginator            = "codex_cli_rs"
 	codexDefaultImageToolModel = "gpt-image-2"
 	codexResponsesBetaHeader   = "responses=experimental"
+	codexRoutingHintHeader     = "X-Codex-Routing-Hint"
 	codexResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
 	codexResponsesLiteMetadata = "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite"
 )
@@ -383,6 +384,40 @@ func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config) {
 
 func codexCloakingEnabled(cfg *config.Config) bool {
 	return cfg != nil && !cfg.Codex.DisableCodexCloaking
+}
+
+// applyCodexRoutingHintHeader mirrors the official Codex client routing hint
+// for ChatGPT-authenticated requests. API-key provider routes do not use it.
+func applyCodexRoutingHintHeader(headers http.Header, auth *cliproxyauth.Auth, body []byte) {
+	if headers == nil || auth == nil || !strings.EqualFold(strings.TrimSpace(auth.Provider), "codex") || auth.AuthKind() != cliproxyauth.AuthKindOAuth {
+		return
+	}
+
+	model := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+	if !validCodexRoutingHintPart(model) {
+		return
+	}
+
+	hint := "model=" + model
+	if tier := strings.TrimSpace(gjson.GetBytes(body, "service_tier").String()); tier != "" {
+		if !validCodexRoutingHintPart(tier) {
+			return
+		}
+		hint += ";tier=" + tier
+	}
+	headers.Set(codexRoutingHintHeader, hint)
+}
+
+func validCodexRoutingHintPart(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char <= 0x20 || char >= 0x7f || char == ';' || char == '=' {
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeCodexInstructions(body []byte) []byte {

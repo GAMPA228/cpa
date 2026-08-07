@@ -91,6 +91,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	reporter.SetTranslatedReasoningEffort(clientBody, to.String())
 	wsHeaders = applyCodexWebsocketHeaders(ctx, wsHeaders, auth, apiKey, e.cfg)
 	applyModelHeaderOverrides(wsHeaders, baseModel, e.cfg)
+	applyCodexRoutingHintHeader(wsHeaders, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(wsHeaders, &identityState)
 
 	var authID, authLabel, authType, authValue string

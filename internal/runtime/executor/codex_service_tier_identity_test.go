@@ -1,12 +1,16 @@
 package executor
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 	"github.com/tidwall/gjson"
 )
 
@@ -47,5 +51,103 @@ func TestCodexFastRequestKeepsCanonicalIdentityAfterModelOverride(t *testing.T) 
 	}
 	if got := req.Header.Get("OpenAI-Beta"); got != codexResponsesBetaHeader {
 		t.Fatalf("OpenAI-Beta = %q, want %q", got, codexResponsesBetaHeader)
+	}
+}
+
+func TestApplyCodexRoutingHintHeaderForOAuthFastRequest(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{"access_token": "oauth-token"},
+	}
+	headers := http.Header{}
+
+	applyCodexRoutingHintHeader(headers, auth, []byte(`{"model":"gpt-5.5","service_tier":"priority"}`))
+
+	if got := headers.Get(codexRoutingHintHeader); got != "model=gpt-5.5;tier=priority" {
+		t.Fatalf("%s = %q, want %q", codexRoutingHintHeader, got, "model=gpt-5.5;tier=priority")
+	}
+}
+
+func TestApplyCodexRoutingHintHeaderForOAuthStandardRequest(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{"access_token": "oauth-token"},
+	}
+	headers := http.Header{}
+
+	applyCodexRoutingHintHeader(headers, auth, []byte(`{"model":"gpt-5.6-terra"}`))
+
+	if got := headers.Get(codexRoutingHintHeader); got != "model=gpt-5.6-terra" {
+		t.Fatalf("%s = %q, want %q", codexRoutingHintHeader, got, "model=gpt-5.6-terra")
+	}
+}
+
+func TestApplyCodexRoutingHintHeaderOmitsAPIKeyRoutes(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"api_key": "sk-test"},
+	}
+	headers := http.Header{}
+
+	applyCodexRoutingHintHeader(headers, auth, []byte(`{"model":"gpt-5.5","service_tier":"priority"}`))
+
+	if got := headers.Get(codexRoutingHintHeader); got != "" {
+		t.Fatalf("%s = %q, want empty", codexRoutingHintHeader, got)
+	}
+}
+
+func TestApplyCodexRoutingHintHeaderRejectsInvalidValues(t *testing.T) {
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Metadata: map[string]any{"access_token": "oauth-token"},
+	}
+	headers := http.Header{}
+
+	applyCodexRoutingHintHeader(headers, auth, []byte(`{"model":"gpt-5.5;route=other","service_tier":"priority"}`))
+
+	if got := headers.Get(codexRoutingHintHeader); got != "" {
+		t.Fatalf("%s = %q, want empty", codexRoutingHintHeader, got)
+	}
+}
+
+func TestCodexExecutorForwardsFastRoutingHintToOAuthUpstream(t *testing.T) {
+	var gotRoutingHint string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRoutingHint = r.Header.Get(codexRoutingHintHeader)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"output\":[],\"service_tier\":\"priority\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"))
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll},
+		ServiceTierPolicy: config.ServiceTierPolicyConfig{Codex: config.CodexServiceTierPolicyConfig{
+			Enabled:        true,
+			AllowedModels:  []string{"gpt-5.5"},
+			AllowedAPIKeys: []string{"sk-allowed"},
+		}},
+	}
+	executor := NewCodexExecutor(cfg)
+	auth := &cliproxyauth.Auth{
+		Provider:   "codex",
+		Attributes: map[string]string{"base_url": server.URL, "plan_type": "free"},
+		Metadata:   map[string]any{"access_token": "oauth-token"},
+	}
+
+	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
+		Model:   "gpt-5.5",
+		Payload: []byte(`{"model":"gpt-5.5","input":"hello"}`),
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FormatOpenAIResponse,
+		Metadata: map[string]any{
+			cliproxyexecutor.UserAPIKeyMetadataKey:  "sk-allowed",
+			cliproxyexecutor.ServiceTierMetadataKey: "fast",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if gotRoutingHint != "model=gpt-5.5;tier=priority" {
+		t.Fatalf("%s = %q, want %q", codexRoutingHintHeader, gotRoutingHint, "model=gpt-5.5;tier=priority")
 	}
 }
