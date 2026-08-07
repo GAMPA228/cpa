@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -25,10 +24,10 @@ import (
 
 const (
 	codexClientVersion         = "0.146.0"
-	codexMinimumClientVersion  = "0.144.0"
-	codexUserAgent             = "codex-tui/0.146.0 (Mac OS 26.5.0; arm64) iTerm.app/3.6.10 (codex-tui; 0.146.0)"
-	codexOriginator            = "codex-tui"
+	codexUserAgent             = "codex_cli_rs/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexOriginator            = "codex_cli_rs"
 	codexDefaultImageToolModel = "gpt-image-2"
+	codexResponsesBetaHeader   = "responses=experimental"
 	codexResponsesLiteHeader   = "X-OpenAI-Internal-Codex-Responses-Lite"
 	codexResponsesLiteMetadata = "client_metadata.ws_request_header_x_openai_internal_codex_responses_lite"
 )
@@ -280,20 +279,32 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 	applyCodexHeadersFromSources(r, auth, token, stream, cfg, ginHeaders)
 }
 
-// applyModelHeaderOverrides forces models.json config.override_header onto upstream headers.
-func applyModelHeaderOverrides(headers http.Header, modelName string) {
+// applyModelHeaderOverrides applies model-specific headers while keeping the
+// canonical Codex identity authoritative when cloaking is enabled.
+func applyModelHeaderOverrides(headers http.Header, modelName string, cfg *config.Config) {
 	if headers == nil {
 		return
 	}
 	overrides := registry.ModelOverrideHeaders(modelName)
-	if len(overrides) == 0 {
-		return
-	}
+	cloakingEnabled := codexCloakingEnabled(cfg)
 	for key, value := range overrides {
+		if cloakingEnabled && isCodexIdentityHeader(key) {
+			continue
+		}
 		headers.Set(key, value)
 	}
 	if strings.Contains(headers.Get("User-Agent"), "Mac OS") && codexSessionHeaderValue(headers) == "" {
 		headers.Set("Session_id", uuid.NewString())
+	}
+	applyCodexCloakingHeaders(headers, cfg)
+}
+
+func isCodexIdentityHeader(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "user-agent", "originator", "version":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -356,65 +367,22 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
 	applyCodexCloakingHeaders(r.Header, cfg)
+	if codexCloakingEnabled(cfg) {
+		r.Header.Set("OpenAI-Beta", codexResponsesBetaHeader)
+	}
 }
 
 func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config) {
-	if headers == nil || cfg == nil || cfg.Codex.DisableCodexCloaking {
+	if headers == nil || !codexCloakingEnabled(cfg) {
 		return
 	}
 	headers.Set("User-Agent", codexUserAgent)
 	headers.Set("Originator", codexOriginator)
-
-	version := strings.TrimSpace(headers.Get("Version"))
-	if version != "" && !codexVersionAtLeast(version, codexMinimumClientVersion) {
-		headers.Set("Version", codexClientVersion)
-	}
+	headers.Set("Version", codexClientVersion)
 }
 
-func codexVersionAtLeast(version, minimum string) bool {
-	versionParts, okVersion := codexNumericVersionParts(version)
-	minimumParts, okMinimum := codexNumericVersionParts(minimum)
-	if !okVersion || !okMinimum {
-		return false
-	}
-	length := len(versionParts)
-	if len(minimumParts) > length {
-		length = len(minimumParts)
-	}
-	for index := 0; index < length; index++ {
-		versionPart := 0
-		minimumPart := 0
-		if index < len(versionParts) {
-			versionPart = versionParts[index]
-		}
-		if index < len(minimumParts) {
-			minimumPart = minimumParts[index]
-		}
-		if versionPart != minimumPart {
-			return versionPart > minimumPart
-		}
-	}
-	return true
-}
-
-func codexNumericVersionParts(version string) ([]int, bool) {
-	version = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(version, "v"), "V"))
-	if suffixIndex := strings.IndexAny(version, "-+"); suffixIndex >= 0 {
-		version = version[:suffixIndex]
-	}
-	if version == "" {
-		return nil, false
-	}
-	segments := strings.Split(version, ".")
-	parts := make([]int, len(segments))
-	for index, segment := range segments {
-		part, errParse := strconv.Atoi(segment)
-		if errParse != nil || part < 0 {
-			return nil, false
-		}
-		parts[index] = part
-	}
-	return parts, true
+func codexCloakingEnabled(cfg *config.Config) bool {
+	return cfg != nil && !cfg.Codex.DisableCodexCloaking
 }
 
 func normalizeCodexInstructions(body []byte) []byte {

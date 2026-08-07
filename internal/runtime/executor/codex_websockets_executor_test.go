@@ -974,11 +974,11 @@ func TestApplyCodexWebsocketHeadersDefaultsToCurrentResponsesBeta(t *testing.T) 
 	if !strings.HasPrefix(codexUserAgent, codexOriginator+"/") {
 		t.Fatalf("default Codex User-Agent = %s, want prefix %s/", codexUserAgent, codexOriginator)
 	}
-	if !strings.HasPrefix(codexUserAgent, "codex-tui/") {
-		t.Fatalf("default Codex User-Agent = %s, want codex-tui prefix", codexUserAgent)
+	if !strings.HasPrefix(codexUserAgent, "codex_cli_rs/") {
+		t.Fatalf("default Codex User-Agent = %s, want codex_cli_rs prefix", codexUserAgent)
 	}
-	if !strings.Contains(codexUserAgent, "(codex-tui;") {
-		t.Fatalf("default Codex User-Agent = %s, want codex-tui suffix", codexUserAgent)
+	if !strings.Contains(codexUserAgent, "xterm-256color") {
+		t.Fatalf("default Codex User-Agent = %s, want CLI terminal suffix", codexUserAgent)
 	}
 	if got := headers.Get("Originator"); got != codexOriginator {
 		t.Fatalf("Originator = %s, want %s", got, codexOriginator)
@@ -1598,20 +1598,21 @@ func TestApplyCodexHeadersDefaultsToCurrentCodexIdentity(t *testing.T) {
 	if got := req.Header.Get("Version"); got != codexClientVersion {
 		t.Fatalf("Version = %q, want %q", got, codexClientVersion)
 	}
+	if got := req.Header.Get("OpenAI-Beta"); got != codexResponsesBetaHeader {
+		t.Fatalf("OpenAI-Beta = %q, want %q", got, codexResponsesBetaHeader)
+	}
 }
 
-func TestApplyCodexCloakingHeadersNormalizesVersion(t *testing.T) {
+func TestApplyCodexCloakingHeadersForcesCanonicalVersion(t *testing.T) {
 	tests := []struct {
-		name        string
-		version     string
-		wantVersion string
+		name    string
+		version string
 	}{
-		{name: "absent", version: "", wantVersion: ""},
-		{name: "stale prerelease", version: "0.115.0-alpha.27", wantVersion: codexClientVersion},
-		{name: "minimum", version: codexMinimumClientVersion, wantVersion: codexMinimumClientVersion},
-		{name: "current prerelease", version: "0.146.0-alpha.3", wantVersion: "0.146.0-alpha.3"},
-		{name: "newer", version: "0.147.0", wantVersion: "0.147.0"},
-		{name: "invalid", version: "development", wantVersion: codexClientVersion},
+		{name: "absent", version: ""},
+		{name: "stale prerelease", version: "0.115.0-alpha.27"},
+		{name: "current prerelease", version: "0.146.0-alpha.3"},
+		{name: "newer", version: "0.147.0"},
+		{name: "invalid", version: "development"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1630,15 +1631,14 @@ func TestApplyCodexCloakingHeadersNormalizesVersion(t *testing.T) {
 			if got := headers.Get("Originator"); got != codexOriginator {
 				t.Fatalf("Originator = %q, want %q", got, codexOriginator)
 			}
-			if got := headers.Get("Version"); got != test.wantVersion {
-				t.Fatalf("Version = %q, want %q", got, test.wantVersion)
+			if got := headers.Get("Version"); got != codexClientVersion {
+				t.Fatalf("Version = %q, want %q", got, codexClientVersion)
 			}
 		})
 	}
 }
 
-func TestApplyModelHeaderOverridesFromModelConfig(t *testing.T) {
-	const wantUA = "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)"
+func TestApplyModelHeaderOverridesPreservesCanonicalIdentity(t *testing.T) {
 	req, err := http.NewRequest(http.MethodPost, "https://example.com/responses", nil)
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
@@ -1654,21 +1654,21 @@ func TestApplyModelHeaderOverridesFromModelConfig(t *testing.T) {
 	}
 
 	applyCodexHeaders(req, auth, "oauth-token", true, cfg)
-	applyModelHeaderOverrides(req.Header, "gpt-5.6-luna")
+	applyModelHeaderOverrides(req.Header, "gpt-5.6-luna", cfg)
 
-	if got := req.Header.Get("User-Agent"); got != wantUA {
-		t.Fatalf("User-Agent = %q, want %q", got, wantUA)
+	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
 	}
-	if got := req.Header.Get("Originator"); got != "codex-tui" {
-		t.Fatalf("Originator = %q, want codex-tui", got)
+	if got := req.Header.Get("Originator"); got != codexOriginator {
+		t.Fatalf("Originator = %q, want %q", got, codexOriginator)
 	}
-	if got := codexSessionHeaderValue(req.Header); got == "" {
-		t.Fatal("expected Session_id to be set for Mac OS User-Agent override")
+	if got := req.Header.Get("Version"); got != codexClientVersion {
+		t.Fatalf("Version = %q, want %q", got, codexClientVersion)
 	}
 
-	applyModelHeaderOverrides(req.Header, "gpt-5.4")
-	if got := req.Header.Get("User-Agent"); got != wantUA {
-		t.Fatalf("User-Agent after no-op override = %q, want %q", got, wantUA)
+	applyModelHeaderOverrides(req.Header, "gpt-5.4", cfg)
+	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
+		t.Fatalf("User-Agent after no-op override = %q, want %q", got, codexUserAgent)
 	}
 }
 
@@ -1692,7 +1692,7 @@ func TestApplyModelHeaderOverridesMultipleHeaders(t *testing.T) {
 	headers.Set("Originator", "old-origin")
 	headers.Set("X-Test-Header", "old-value")
 
-	applyModelHeaderOverrides(headers, "test-override-headers-model")
+	applyModelHeaderOverrides(headers, "test-override-headers-model", nil)
 
 	if got := headers.Get("User-Agent"); got != "custom-ua/1.0" {
 		t.Fatalf("User-Agent = %q, want custom-ua/1.0", got)
@@ -1760,7 +1760,7 @@ func TestApplyModelHeaderOverridesUnknownModel(t *testing.T) {
 	headers := http.Header{}
 	headers.Set("User-Agent", "existing-agent")
 
-	applyModelHeaderOverrides(headers, "gpt-5.4")
+	applyModelHeaderOverrides(headers, "gpt-5.4", nil)
 
 	if got := headers.Get("User-Agent"); got != "existing-agent" {
 		t.Fatalf("User-Agent = %q, want existing-agent", got)
