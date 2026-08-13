@@ -24,6 +24,8 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+var benchmarkBuildCodexWebsocketRequestBodyOutput []byte
+
 func TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID(t *testing.T) {
 	body := []byte(`{"model":"gpt-5-codex","previous_response_id":"resp-1","input":[{"type":"message","id":"msg-1"}]}`)
 
@@ -43,6 +45,15 @@ func TestBuildCodexWebsocketRequestBodyPreservesPreviousResponseID(t *testing.T)
 	}
 }
 
+func BenchmarkBuildCodexWebsocketRequestBodyLargePayload(b *testing.B) {
+	body := []byte(`{"model":"gpt-5.6","input":[{"type":"message","id":"msg_1","role":"user","content":"` + strings.Repeat("x", 8<<20) + `"}]}`)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	b.ResetTimer()
+	for b.Loop() {
+		benchmarkBuildCodexWebsocketRequestBodyOutput = buildCodexWebsocketRequestBody(body)
+	}
+}
 func TestBuildCodexWebsocketRequestBodySanitizesOverlongInputItemIDs(t *testing.T) {
 	longReasoningItemID := "rs_" + strings.Repeat("a", 64)
 	longCallItemID := strings.Repeat("grok-call-item-", 6)
@@ -1170,8 +1181,32 @@ func TestApplyCodexWebsocketHeadersForcesCurrentOAuthIdentity(t *testing.T) {
 	}
 }
 
+func TestApplyCodexWebsocketHeadersDefaultsToCodexCloakingForAPIKey(t *testing.T) {
+	cfg := &config.Config{}
+	auth := &cliproxyauth.Auth{
+		Provider: "codex",
+		Attributes: map[string]string{
+			"api_key":           "sk-test",
+			"header:User-Agent": "custom-ua",
+			"header:Originator": "custom-origin",
+		},
+	}
+	headers := applyCodexWebsocketHeaders(context.Background(), http.Header{}, auth, "sk-test", cfg)
+
+	if got := headers.Get("User-Agent"); got != codexUserAgent {
+		t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+	}
+	if got := headers.Get("Originator"); got != codexOriginator {
+		t.Fatalf("Originator = %q, want %q", got, codexOriginator)
+	}
+	if got := headers.Get("Version"); got != codexClientVersion {
+		t.Fatalf("Version = %q, want %q", got, codexClientVersion)
+	}
+}
+
 func TestApplyCodexWebsocketHeadersIgnoresConfigForAPIKeyAuth(t *testing.T) {
 	cfg := &config.Config{
+		Codex: config.CodexConfig{DisableCodexCloaking: true},
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
 			UserAgent:    "config-ua",
 			BetaFeatures: "config-beta",
@@ -1669,6 +1704,24 @@ func TestApplyModelHeaderOverridesPreservesCanonicalIdentity(t *testing.T) {
 	applyModelHeaderOverrides(req.Header, "gpt-5.4", cfg)
 	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
 		t.Fatalf("User-Agent after no-op override = %q, want %q", got, codexUserAgent)
+	}
+}
+
+func TestApplyModelHeaderOverridesUsesModelConfigWhenCloakingDisabled(t *testing.T) {
+	headers := http.Header{}
+	cfg := &config.Config{Codex: config.CodexConfig{DisableCodexCloaking: true}}
+
+	applyModelHeaderOverrides(headers, "gpt-5.6-luna", cfg)
+
+	const wantUA = "codex-tui/0.144.0 (Mac OS 26.5.1; arm64) iTerm.app/3.6.11 (codex-tui; 0.144.0)"
+	if got := headers.Get("User-Agent"); got != wantUA {
+		t.Fatalf("User-Agent = %q, want %q", got, wantUA)
+	}
+	if got := headers.Get("Originator"); got != "codex-tui" {
+		t.Fatalf("Originator = %q, want codex-tui", got)
+	}
+	if got := codexSessionHeaderValue(headers); got == "" {
+		t.Fatal("expected model override to initialize Session-Id")
 	}
 }
 

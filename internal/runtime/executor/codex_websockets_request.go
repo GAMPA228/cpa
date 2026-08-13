@@ -124,9 +124,7 @@ func applyCodexWebsocketHeaders(ctx context.Context, headers http.Header, auth *
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(&http.Request{Header: headers}, attrs)
-	if !isAPIKey {
-		applyCodexCloakingHeaders(headers, cfg)
-	}
+	applyCodexCloakingHeaders(headers, cfg)
 
 	return headers
 }
