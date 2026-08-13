@@ -63,6 +63,13 @@ type Status struct {
 	Exceeded        bool      `json:"exceeded"`
 }
 
+// DailyUsage describes one API key's usage for a local calendar day.
+type DailyUsage struct {
+	Day          string `json:"day"`
+	UsedTokens   int64  `json:"used-tokens"`
+	RequestCount int64  `json:"request-count"`
+}
+
 // Manager enforces and records daily downstream API key token quotas.
 type Manager struct {
 	mu    sync.RWMutex
@@ -247,6 +254,42 @@ func (m *Manager) Lookup(apiKey string, now time.Time) (Status, bool, error) {
 		Limited:         limit > 0,
 		Exceeded:        limit > 0 && usage.UsedTokens >= limit,
 	}, true, nil
+}
+
+// History returns daily usage for one configured downstream API key, oldest day first.
+func (m *Manager) History(apiKey string, now time.Time, days int) ([]DailyUsage, bool, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if m == nil || apiKey == "" || days <= 0 {
+		return nil, false, nil
+	}
+	if !m.hasAPIKey(apiKey) {
+		return nil, false, nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if days > 31 {
+		days = 31
+	}
+
+	history := make([]DailyUsage, 0, days)
+	for offset := days - 1; offset >= 0; offset-- {
+		dayTime := now.AddDate(0, 0, -offset)
+		day, err := m.ensureDayLoaded(dayTime)
+		if err != nil {
+			return nil, true, err
+		}
+		if err = m.syncExternalUsage(dayTime); err != nil {
+			return nil, true, err
+		}
+		usage := m.usageForKey(usageKey{APIKeyHash: hashAPIKey(apiKey), Day: day})
+		history = append(history, DailyUsage{
+			Day:          day,
+			UsedTokens:   usage.UsedTokens,
+			RequestCount: usage.RequestCount,
+		})
+	}
+	return history, true, nil
 }
 
 // HandleUsage records completed usage into the independent quota ledger.

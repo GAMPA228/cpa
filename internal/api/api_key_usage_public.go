@@ -20,16 +20,18 @@ type publicAPIKeyUsageLookupRequest struct {
 }
 
 type publicAPIKeyUsageStatus struct {
-	APIKey          string    `json:"api-key"`
-	Remark          string    `json:"remark,omitempty"`
-	DailyTokenLimit int64     `json:"daily-token-limit"`
-	UsedTokens      int64     `json:"used-tokens"`
-	RemainingTokens int64     `json:"remaining-tokens"`
-	RequestCount    int64     `json:"request-count"`
-	Day             string    `json:"day"`
-	ResetAt         time.Time `json:"reset-at"`
-	Limited         bool      `json:"limited"`
-	Exceeded        bool      `json:"exceeded"`
+	APIKey          string                   `json:"api-key"`
+	Remark          string                   `json:"remark,omitempty"`
+	DailyTokenLimit int64                    `json:"daily-token-limit"`
+	UsedTokens      int64                    `json:"used-tokens"`
+	RemainingTokens int64                    `json:"remaining-tokens"`
+	RequestCount    int64                    `json:"request-count"`
+	Day             string                   `json:"day"`
+	ResetAt         time.Time                `json:"reset-at"`
+	Limited         bool                     `json:"limited"`
+	Exceeded        bool                     `json:"exceeded"`
+	UsagePercentage float64                  `json:"usage-percentage"`
+	History         []apikeyquota.DailyUsage `json:"history"`
 }
 
 func (s *Server) serveAPIKeyUsagePage(c *gin.Context) {
@@ -53,7 +55,8 @@ func (s *Server) lookupPublicAPIKeyUsage(c *gin.Context) {
 		return
 	}
 
-	status, found, err := s.apiKeyQuotaManager.Lookup(apiKey, time.Now())
+	now := time.Now()
+	history, found, err := s.apiKeyQuotaManager.History(apiKey, now, 7)
 	if err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "api key usage unavailable"})
 		return
@@ -62,10 +65,19 @@ func (s *Server) lookupPublicAPIKeyUsage(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "api key not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"item": publicAPIKeyUsageStatusFrom(status)})
+	status, found, err := s.apiKeyQuotaManager.Lookup(apiKey, now)
+	if err != nil || !found {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "api key usage unavailable"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"item": publicAPIKeyUsageStatusFrom(status, history)})
 }
 
-func publicAPIKeyUsageStatusFrom(status apikeyquota.Status) publicAPIKeyUsageStatus {
+func publicAPIKeyUsageStatusFrom(status apikeyquota.Status, history []apikeyquota.DailyUsage) publicAPIKeyUsageStatus {
+	usagePercentage := float64(0)
+	if status.Limited && status.DailyTokenLimit > 0 && status.UsedTokens > 0 {
+		usagePercentage = float64(status.UsedTokens) * 100 / float64(status.DailyTokenLimit)
+	}
 	return publicAPIKeyUsageStatus{
 		APIKey:          util.HideAPIKey(status.APIKey),
 		Remark:          status.Remark,
@@ -77,6 +89,8 @@ func publicAPIKeyUsageStatusFrom(status apikeyquota.Status) publicAPIKeyUsageSta
 		ResetAt:         status.ResetAt,
 		Limited:         status.Limited,
 		Exceeded:        status.Exceeded,
+		UsagePercentage: usagePercentage,
+		History:         history,
 	}
 }
 
@@ -241,7 +255,7 @@ const apiKeyUsagePageHTML = `<!doctype html>
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(4, minmax(0, 1fr));
       background: var(--panel);
     }
     .item {
@@ -251,10 +265,10 @@ const apiKeyUsagePageHTML = `<!doctype html>
       border-right: 1px solid var(--border);
       border-bottom: 1px solid var(--border);
     }
-    .item:nth-child(3n) {
+    .item:nth-child(4n) {
       border-right: 0;
     }
-    .item:nth-last-child(-n + 3) {
+    .item:nth-last-child(-n + 4) {
       border-bottom: 0;
     }
     .item span {
@@ -270,6 +284,75 @@ const apiKeyUsagePageHTML = `<!doctype html>
       font-size: 20px;
       line-height: 1.25;
       word-break: break-word;
+    }
+    .share-meter {
+      height: 6px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5ebe7;
+    }
+    .share-meter > span {
+      display: block;
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--primary);
+      transition: width 240ms ease;
+    }
+    .history {
+      padding: 18px;
+      border-top: 1px solid var(--border);
+      background: var(--panel);
+    }
+    .history-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .history-head h2 {
+      margin: 0;
+      font-size: 17px;
+    }
+    .history-head span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .history-list {
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .history-row {
+      display: grid;
+      grid-template-columns: 105px minmax(120px, 1fr) 105px 90px;
+      align-items: center;
+      gap: 14px;
+      min-height: 42px;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .history-row:last-child { border-bottom: 0; }
+    .history-row.today { background: var(--panel-soft); }
+    .history-date { font-weight: 700; }
+    .history-value, .history-requests { text-align: right; }
+    .history-value { font-weight: 800; }
+    .history-requests { color: var(--muted); }
+    .history-bar {
+      height: 7px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e5ebe7;
+    }
+    .history-bar > span {
+      display: block;
+      height: 100%;
+      min-width: 0;
+      border-radius: inherit;
+      background: var(--primary);
     }
     @media (max-width: 720px) {
       body {
@@ -297,12 +380,17 @@ const apiKeyUsagePageHTML = `<!doctype html>
       .item {
         border-right: 0;
       }
-      .item:nth-last-child(-n + 3) {
+      .item:nth-last-child(-n + 4) {
         border-bottom: 1px solid var(--border);
       }
       .item:last-child {
         border-bottom: 0;
       }
+      .history-row {
+        grid-template-columns: 84px minmax(60px, 1fr) 82px;
+        gap: 8px;
+      }
+      .history-requests { display: none; }
     }
   </style>
 </head>
@@ -333,11 +421,24 @@ const apiKeyUsagePageHTML = `<!doctype html>
       </div>
       <div class="grid">
         <div class="item"><span>今日已用</span><strong id="used-tokens">-</strong></div>
+        <div class="item">
+          <span>今日用量占比</span>
+          <strong id="usage-percentage">-</strong>
+          <div class="share-meter" aria-hidden="true"><span id="usage-percentage-bar"></span></div>
+        </div>
         <div class="item"><span>剩余额度</span><strong id="remaining-tokens">-</strong></div>
         <div class="item"><span>每日额度</span><strong id="daily-limit">-</strong></div>
-        <div class="item"><span>请求次数</span><strong id="request-count">-</strong></div>
+        <div class="item"><span>近 7 天已用</span><strong id="seven-day-tokens">-</strong></div>
+        <div class="item"><span>今日请求次数</span><strong id="request-count">-</strong></div>
         <div class="item"><span>统计日期</span><strong id="usage-day">-</strong></div>
         <div class="item"><span>重置时间</span><strong id="reset-at">-</strong></div>
+      </div>
+      <div class="history">
+        <div class="history-head">
+          <h2>近 7 天用量</h2>
+          <span>按自然日统计，包含今天</span>
+        </div>
+        <div id="history-list" class="history-list"></div>
       </div>
     </section>
   </main>
@@ -356,7 +457,11 @@ const apiKeyUsagePageHTML = `<!doctype html>
 
     function formatTokens(value) {
       const normalized = Number.isFinite(Number(value)) ? Math.max(0, Number(value)) : 0;
-      return normalized.toLocaleString('zh-CN') + ' tokens';
+      const millions = normalized / 1000000;
+      return millions.toLocaleString('zh-CN', {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1
+      }) + 'M';
     }
 
     function formatDateTime(value) {
@@ -364,6 +469,53 @@ const apiKeyUsagePageHTML = `<!doctype html>
       const date = new Date(value);
       if (Number.isNaN(date.getTime())) return '-';
       return date.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function renderHistory(history, currentDay) {
+      const entries = Array.isArray(history) ? history : [];
+      const list = document.getElementById('history-list');
+      list.replaceChildren();
+      const maxTokens = entries.reduce((max, entry) => Math.max(max, Number(entry['used-tokens'] || 0)), 0);
+      let sevenDayTokens = 0;
+
+      entries.forEach((entry) => {
+        const usedTokens = Math.max(0, Number(entry['used-tokens'] || 0));
+        const requestCount = Math.max(0, Number(entry['request-count'] || 0));
+        sevenDayTokens += usedTokens;
+
+        const row = document.createElement('div');
+        row.className = 'history-row' + (entry.day === currentDay ? ' today' : '');
+
+        const date = document.createElement('span');
+        date.className = 'history-date';
+        date.textContent = entry.day || '-';
+
+        const bar = document.createElement('div');
+        bar.className = 'history-bar';
+        const barFill = document.createElement('span');
+        const width = maxTokens > 0 ? usedTokens / maxTokens * 100 : 0;
+        barFill.style.width = (usedTokens > 0 ? Math.max(2, width) : 0) + '%';
+        bar.appendChild(barFill);
+
+        const value = document.createElement('span');
+        value.className = 'history-value';
+        value.textContent = formatTokens(usedTokens);
+
+        const requests = document.createElement('span');
+        requests.className = 'history-requests';
+        requests.textContent = requestCount.toLocaleString('zh-CN') + ' 次';
+
+        row.append(date, bar, value, requests);
+        list.appendChild(row);
+      });
+
+      if (entries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'history-row';
+        empty.textContent = '暂无近 7 天数据';
+        list.appendChild(empty);
+      }
+      return sevenDayTokens;
     }
 
     function renderStatus(item) {
@@ -374,6 +526,12 @@ const apiKeyUsagePageHTML = `<!doctype html>
       document.getElementById('request-count').textContent = Number(item['request-count'] || 0).toLocaleString('zh-CN');
       document.getElementById('usage-day').textContent = item.day || '-';
       document.getElementById('reset-at').textContent = formatDateTime(item['reset-at']);
+
+      const usagePercentage = Math.max(0, Number(item['usage-percentage'] || 0));
+      document.getElementById('usage-percentage').textContent = item.limited ? usagePercentage.toFixed(1) + '%' : '不限';
+      document.getElementById('usage-percentage-bar').style.width = item.limited ? Math.min(100, usagePercentage) + '%' : '0';
+      const sevenDayTokens = renderHistory(item.history, item.day);
+      document.getElementById('seven-day-tokens').textContent = formatTokens(sevenDayTokens);
 
       const status = document.getElementById('result-status');
       status.textContent = item.exceeded ? '已超额' : (item.limited ? '可用' : '未限额');

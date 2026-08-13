@@ -182,6 +182,57 @@ func TestManagerLookupReturnsSingleAPIKeyStatus(t *testing.T) {
 	}
 }
 
+func TestManagerHistoryReturnsSevenDaysOldestFirst(t *testing.T) {
+	store, err := newSQLiteStore(filepath.Join(t.TempDir(), "quota.sqlite3"))
+	if err != nil {
+		t.Fatalf("newSQLiteStore() error = %v", err)
+	}
+	manager := &Manager{
+		cfg: &config.Config{SDKConfig: config.SDKConfig{APIKeyEntries: config.APIKeyEntryList{
+			{APIKey: "sk-history"},
+		}}},
+		store: store,
+		loc:   time.UTC,
+	}
+	t.Cleanup(func() { _ = manager.Close() })
+	now := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
+	manager.HandleUsage(context.Background(), coreusage.Record{
+		APIKey:      "sk-history",
+		RequestedAt: now.AddDate(0, 0, -6),
+		Detail:      coreusage.Detail{TotalTokens: 10},
+	})
+	manager.HandleUsage(context.Background(), coreusage.Record{
+		APIKey:      "sk-history",
+		RequestedAt: now,
+		Detail:      coreusage.Detail{TotalTokens: 70},
+	})
+
+	history, found, err := manager.History("sk-history", now, 7)
+	if err != nil {
+		t.Fatalf("History() error = %v", err)
+	}
+	if !found {
+		t.Fatal("History() found = false, want true")
+	}
+	if len(history) != 7 {
+		t.Fatalf("History() len = %d, want 7", len(history))
+	}
+	if history[0].Day != "2026-07-01" || history[0].UsedTokens != 10 || history[0].RequestCount != 1 {
+		t.Fatalf("History() first = %#v, want 2026-07-01/10/1", history[0])
+	}
+	if history[6].Day != "2026-07-07" || history[6].UsedTokens != 70 || history[6].RequestCount != 1 {
+		t.Fatalf("History() last = %#v, want 2026-07-07/70/1", history[6])
+	}
+
+	_, found, err = manager.History("sk-missing", now, 7)
+	if err != nil {
+		t.Fatalf("History() missing error = %v", err)
+	}
+	if found {
+		t.Fatal("History() missing found = true, want false")
+	}
+}
+
 type testExternalUsageProvider struct {
 	usage map[string]ExternalUsage
 	err   error
