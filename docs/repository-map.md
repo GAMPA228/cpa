@@ -5,9 +5,10 @@ This backend project is maintained together with a separate frontend management-
 ## Backend
 
 - Local path: `F:\codex\CLIProxyAPI`
+- User repository: `git@github.com:GAMPA228/cpa.git`
+- User repository remote alias: `origin`
 - Official repository: `git@github.com:router-for-me/CLIProxyAPI.git`
-- Remote alias: `origin`
-- Notes: `origin` points directly to the official backend repository.
+- Official repository remote alias: `upstream`
 
 ## Frontend Management Center
 
@@ -24,6 +25,6 @@ When asked to pull the latest official updates:
 1. Check the target repository worktree first.
 2. Preserve uncommitted local changes.
 3. Commit local changes before pulling when the user asks to do so, or when the update may conflict.
-4. Pull backend official updates from backend `origin`.
+4. Pull backend official updates from backend `upstream`.
 5. Pull frontend official updates from frontend `upstream`.
 6. Do not push to any remote unless the user explicitly asks.

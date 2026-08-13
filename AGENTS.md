@@ -10,7 +10,8 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 - Frontend management center local path: `F:\gitRepository\Cli-Proxy-API-Management-Center`
 - Frontend user fork remote: `origin` (`git@github.com:GAMPA228/Cli-Proxy-API-Management-Center.git`)
 - Frontend official remote: `upstream` (`git@github.com:router-for-me/Cli-Proxy-API-Management-Center.git`)
-- When asked to pull official updates, check and preserve local changes first; backend updates come from backend `origin`, frontend updates come from frontend `upstream`.
+- Backend user remote is `origin` (`git@github.com:GAMPA228/cpa.git`) and backend official remote is `upstream` (`git@github.com:router-for-me/CLIProxyAPI.git`).
+- When asked to pull official updates, check and preserve local changes first; backend and frontend official updates both come from their respective `upstream` remotes.
 - Do not push backend or frontend changes unless the user explicitly asks.
 
 ## Git Workflow
