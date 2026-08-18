@@ -734,6 +734,13 @@ func (m *Manager) pickHomeDispatchSelection(ctx context.Context, model string, o
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if _, restricted := allowedCodexAuthIDsFromMetadata(opts.Metadata); restricted {
+		return nil, &Error{
+			Code:       "auth_routing_unsupported",
+			Message:    "API key group auth routing is unavailable while Home is enabled",
+			HTTPStatus: http.StatusServiceUnavailable,
+		}
+	}
 
 	requestedModel := strings.TrimSpace(model)
 	if requestedModel == "" {

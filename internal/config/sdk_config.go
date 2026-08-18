@@ -60,6 +60,9 @@ type SDKConfig struct {
 	// APIKeyGroupIndex is a runtime-only membership index populated during config sanitization.
 	APIKeyGroupIndex map[string]map[string]struct{} `yaml:"-" json:"-"`
 
+	// APIKeyUpstreamAuthIndex maps downstream API keys to their allowed Codex auth IDs.
+	APIKeyUpstreamAuthIndex map[string]map[string]struct{} `yaml:"-" json:"-"`
+
 	// ModelRewrite configures downstream API key based OpenAI-compatible model rewrites.
 	ModelRewrite ModelRewriteConfig `yaml:"model-rewrite" json:"model-rewrite"`
 

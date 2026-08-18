@@ -21,6 +21,9 @@ const UserAPIKeyMetadataKey = "user_api_key"
 // DisallowFreeAuthMetadataKey instructs auth selection to skip known free-tier credentials.
 const DisallowFreeAuthMetadataKey = "disallow_free_auth"
 
+// AllowedCodexAuthIDsMetadataKey restricts auth selection to configured Codex auth IDs.
+const AllowedCodexAuthIDsMetadataKey = "allowed_codex_auth_ids"
+
 // AuthSelectionModelMetadataKey overrides the model used only for auth selection.
 const AuthSelectionModelMetadataKey = "auth_selection_model"
 

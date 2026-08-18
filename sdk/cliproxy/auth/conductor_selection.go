@@ -56,6 +56,8 @@ type authSelectionEligibility struct {
 	requiredKind     string
 	credentialPolicy string
 	disallowFreeAuth bool
+	allowedAuthIDs   map[string]struct{}
+	restrictAuthIDs  bool
 }
 
 func withRequiredAuthKind(ctx context.Context, requiredKind string) context.Context {
@@ -75,7 +77,12 @@ func credentialPolicyFromContext(ctx context.Context) string {
 }
 
 func authSelectionEligibilityForRequest(ctx context.Context, opts cliproxyexecutor.Options) authSelectionEligibility {
-	eligibility := authSelectionEligibility{disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata)}
+	allowedAuthIDs, restrictAuthIDs := allowedCodexAuthIDsFromMetadata(opts.Metadata)
+	eligibility := authSelectionEligibility{
+		disallowFreeAuth: disallowFreeAuthFromMetadata(opts.Metadata),
+		allowedAuthIDs:   allowedAuthIDs,
+		restrictAuthIDs:  restrictAuthIDs,
+	}
 	if ctx != nil {
 		eligibility.requiredKind, _ = ctx.Value(requiredAuthKindContextKey{}).(string)
 		eligibility.credentialPolicy, _ = ctx.Value(credentialPolicyContextKey{}).(string)
@@ -93,7 +100,44 @@ func (e authSelectionEligibility) allows(auth *Auth) bool {
 	if e.credentialPolicy != "" && !credentialPolicyAllows(e.credentialPolicy, auth) {
 		return false
 	}
+	if e.restrictAuthIDs {
+		if _, allowed := e.allowedAuthIDs[strings.TrimSpace(auth.ID)]; !allowed {
+			return false
+		}
+	}
 	return !e.disallowFreeAuth || !isFreeCodexAuth(auth)
+}
+
+func allowedCodexAuthIDsFromMetadata(metadata map[string]any) (map[string]struct{}, bool) {
+	if len(metadata) == 0 {
+		return nil, false
+	}
+	raw, exists := metadata[cliproxyexecutor.AllowedCodexAuthIDsMetadataKey]
+	if !exists {
+		return nil, false
+	}
+	allowed := make(map[string]struct{})
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			allowed[value] = struct{}{}
+		}
+	}
+	switch value := raw.(type) {
+	case []string:
+		for _, authID := range value {
+			add(authID)
+		}
+	case []any:
+		for _, authID := range value {
+			if text, ok := authID.(string); ok {
+				add(text)
+			}
+		}
+	case string:
+		add(value)
+	}
+	return allowed, true
 }
 
 func (m *Manager) syncSchedulerFromSnapshot(auths []*Auth) {

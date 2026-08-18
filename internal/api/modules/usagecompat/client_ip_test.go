@@ -100,12 +100,17 @@ func TestSQLiteDetailStoreMigratesClientIPColumn(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.db.Close() })
 	inserted, err := store.Insert("sk-test", "gpt-test", RequestDetail{
-		Timestamp:    time.Date(2026, 7, 23, 1, 2, 3, 0, time.UTC),
-		ClientIP:     "198.51.100.9",
-		ServiceTier:  "fast",
-		AppliedTier:  "priority",
-		ResponseTier: "priority",
-		Tokens:       TokenStats{TotalTokens: 1},
+		Timestamp:     time.Date(2026, 7, 23, 1, 2, 3, 0, time.UTC),
+		ClientIP:      "198.51.100.9",
+		AuthID:        "codex-a.json",
+		ProxyMode:     "proxy",
+		ProxySource:   "auth",
+		ProxyProtocol: "socks5",
+		ProxyEndpoint: "10.20.1.8:1080",
+		ServiceTier:   "fast",
+		AppliedTier:   "priority",
+		ResponseTier:  "priority",
+		Tokens:        TokenStats{TotalTokens: 1},
 	})
 	if err != nil || !inserted {
 		t.Fatalf("Insert() = %v, %v, want true, nil", inserted, err)
@@ -119,6 +124,13 @@ func TestSQLiteDetailStoreMigratesClientIPColumn(t *testing.T) {
 	}
 	if item := page.Items[0]; item.ServiceTier != "fast" || item.AppliedTier != "priority" || item.ResponseTier != "priority" {
 		t.Fatalf("Page() service tiers = %#v", item)
+	}
+	if item := page.Items[0]; item.AuthID != "codex-a.json" || item.ProxyMode != "proxy" || item.ProxySource != "auth" || item.ProxyProtocol != "socks5" || item.ProxyEndpoint != "10.20.1.8:1080" {
+		t.Fatalf("Page() proxy route = %#v", item)
+	}
+	searchPage, err := store.Page(DetailPageQuery{PageSize: 10, Search: "10.20.1.8"})
+	if err != nil || len(searchPage.Items) != 1 {
+		t.Fatalf("Page(proxy search) = %#v, %v", searchPage, err)
 	}
 }
 

@@ -64,6 +64,26 @@ func TestRequestExecutionMetadataIncludesUserAPIKey(t *testing.T) {
 	}
 }
 
+func TestHandlerRequestExecutionMetadataIncludesGroupAuthRestriction(t *testing.T) {
+	w := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(w)
+	ginCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	ginCtx.Set("userApiKey", "sk-product")
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+	cfg := &config.SDKConfig{APIKeyGroups: []config.APIKeyGroup{{
+		ID:              "product",
+		APIKeys:         []string{"sk-product"},
+		UpstreamAuthIDs: []string{"codex-b", "codex-a"},
+	}}}
+	cfg.SanitizeAPIKeyGroups()
+
+	meta := (&BaseAPIHandler{Cfg: cfg}).requestExecutionMetadata(ctx)
+	got, ok := meta[coreexecutor.AllowedCodexAuthIDsMetadataKey].([]string)
+	if !ok || len(got) != 2 || got[0] != "codex-a" || got[1] != "codex-b" {
+		t.Fatalf("AllowedCodexAuthIDsMetadataKey = %#v", meta[coreexecutor.AllowedCodexAuthIDsMetadataKey])
+	}
+}
+
 func TestRequestExecutionMetadataIncludesHashedCallerScope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())

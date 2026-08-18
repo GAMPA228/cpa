@@ -80,7 +80,12 @@ type RequestDetail struct {
 	LatencyMs       int64      `json:"latency_ms"`
 	ClientIP        string     `json:"client_ip,omitempty"`
 	Source          string     `json:"source"`
+	AuthID          string     `json:"auth_id,omitempty"`
 	AuthIndex       string     `json:"auth_index"`
+	ProxyMode       string     `json:"proxy_mode,omitempty"`
+	ProxySource     string     `json:"proxy_source,omitempty"`
+	ProxyProtocol   string     `json:"proxy_protocol,omitempty"`
+	ProxyEndpoint   string     `json:"proxy_endpoint,omitempty"`
 	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
 	ServiceTier     string     `json:"service_tier,omitempty"`
 	AppliedTier     string     `json:"applied_service_tier,omitempty"`
@@ -146,7 +151,12 @@ type UsageDetailRow struct {
 	LatencyMs       int64      `json:"latency_ms"`
 	ClientIP        string     `json:"client_ip"`
 	Source          string     `json:"source"`
+	AuthID          string     `json:"auth_id,omitempty"`
 	AuthIndex       string     `json:"auth_index"`
+	ProxyMode       string     `json:"proxy_mode,omitempty"`
+	ProxySource     string     `json:"proxy_source,omitempty"`
+	ProxyProtocol   string     `json:"proxy_protocol,omitempty"`
+	ProxyEndpoint   string     `json:"proxy_endpoint,omitempty"`
 	ReasoningEffort string     `json:"reasoning_effort,omitempty"`
 	ServiceTier     string     `json:"service_tier,omitempty"`
 	AppliedTier     string     `json:"applied_service_tier,omitempty"`
@@ -360,7 +370,12 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		LatencyMs:       normalizeLatency(record.Latency),
 		ClientIP:        s.resolveClientIP(ctx),
 		Source:          record.Source,
+		AuthID:          record.AuthID,
 		AuthIndex:       record.AuthIndex,
+		ProxyMode:       record.ProxyMode,
+		ProxySource:     record.ProxySource,
+		ProxyProtocol:   record.ProxyProtocol,
+		ProxyEndpoint:   record.ProxyEndpoint,
 		ReasoningEffort: strings.TrimSpace(record.ReasoningEffort),
 		ServiceTier:     normalizedRequestServiceTier(record),
 		AppliedTier:     strings.TrimSpace(record.AppliedServiceTier),
@@ -772,6 +787,11 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
 	detail.ClientIP = strings.TrimSpace(detail.ClientIP)
+	detail.AuthID = strings.TrimSpace(detail.AuthID)
+	detail.ProxyMode = strings.TrimSpace(detail.ProxyMode)
+	detail.ProxySource = strings.TrimSpace(detail.ProxySource)
+	detail.ProxyProtocol = strings.TrimSpace(detail.ProxyProtocol)
+	detail.ProxyEndpoint = strings.TrimSpace(detail.ProxyEndpoint)
 	detail.ReasoningEffort = strings.TrimSpace(detail.ReasoningEffort)
 	detail.ServiceTier = strings.TrimSpace(detail.ServiceTier)
 	detail.AppliedTier = strings.TrimSpace(detail.AppliedTier)

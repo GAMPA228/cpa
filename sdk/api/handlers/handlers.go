@@ -210,6 +210,18 @@ func requestExecutionMetadata(ctx context.Context) map[string]any {
 	return meta
 }
 
+func (h *BaseAPIHandler) requestExecutionMetadata(ctx context.Context) map[string]any {
+	meta := requestExecutionMetadata(ctx)
+	if h == nil || h.Cfg == nil {
+		return meta
+	}
+	userAPIKey, _ := meta[coreexecutor.UserAPIKeyMetadataKey].(string)
+	if authIDs, restricted := h.Cfg.ResolveUpstreamAuthIDs(userAPIKey); restricted {
+		meta[coreexecutor.AllowedCodexAuthIDsMetadataKey] = authIDs
+	}
+	return meta
+}
+
 func requestClientIP(request *http.Request) string {
 	if request == nil {
 		return ""
@@ -422,6 +434,9 @@ func (h *BaseAPIHandler) GetContextWithCancel(handler interfaces.APIHandler, c *
 		}
 	}
 	newCtx, cancel := context.WithCancel(parentCtx)
+	if h != nil && h.Cfg != nil {
+		newCtx = coreusage.WithGlobalProxyURL(newCtx, h.Cfg.ProxyURL)
+	}
 
 	endpoint := ""
 	if c != nil && c.Request != nil {

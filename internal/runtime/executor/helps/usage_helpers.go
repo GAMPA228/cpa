@@ -28,6 +28,10 @@ type UsageReporter struct {
 	alias           string
 	authID          string
 	authIndex       string
+	proxyMode       string
+	proxySource     string
+	proxyProtocol   string
+	proxyEndpoint   string
 	authMu          sync.RWMutex
 	accessTokenHash string
 	authType        string
@@ -77,6 +81,11 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		serviceTier: usage.ServiceTierFromContext(ctx),
 		generate:    usage.GenerateFromContext(ctx),
 	}
+	proxyRoute := resolveProxyRoute(authProxyURL(auth), usage.GlobalProxyURLFromContext(ctx))
+	reporter.proxyMode = proxyRoute.mode
+	reporter.proxySource = proxyRoute.source
+	reporter.proxyProtocol = proxyRoute.protocol
+	reporter.proxyEndpoint = proxyRoute.endpoint
 	if auth != nil {
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
@@ -308,6 +317,10 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		APIKey:              r.apiKey,
 		AuthID:              r.authID,
 		AuthIndex:           r.authIndex,
+		ProxyMode:           r.proxyMode,
+		ProxySource:         r.proxySource,
+		ProxyProtocol:       r.proxyProtocol,
+		ProxyEndpoint:       r.proxyEndpoint,
 		AccessTokenSHA256:   r.accessTokenFingerprint(),
 		AuthType:            r.authType,
 		ReasoningEffort:     r.reasoning,

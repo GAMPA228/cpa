@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestSanitizeAPIKeyGroupsBuildsMembershipIndex(t *testing.T) {
 	cfg := &SDKConfig{APIKeyGroups: []APIKeyGroup{
@@ -42,6 +45,32 @@ func TestAPIKeyMatchesPolicyCombinesDirectAndGroupEntries(t *testing.T) {
 	}
 	if cfg.APIKeyMatchesPolicy("sk-denied", []string{"sk-direct"}, []string{"developers"}) {
 		t.Fatal("unexpected API key match")
+	}
+}
+
+func TestResolveUpstreamAuthIDsCombinesRestrictedGroups(t *testing.T) {
+	cfg := &SDKConfig{APIKeyGroups: []APIKeyGroup{
+		{ID: "product", APIKeys: []string{"sk-shared"}, UpstreamAuthIDs: []string{" codex-b ", "codex-a"}},
+		{ID: "research", APIKeys: []string{"sk-shared", "sk-open"}, UpstreamAuthIDs: []string{"codex-c", "codex-b"}},
+		{ID: "legacy", APIKeys: []string{"sk-open"}},
+	}}
+
+	cfg.SanitizeAPIKeyGroups()
+
+	got, restricted := cfg.ResolveUpstreamAuthIDs("sk-shared")
+	if !restricted {
+		t.Fatal("ResolveUpstreamAuthIDs() restricted = false, want true")
+	}
+	want := []string{"codex-a", "codex-b", "codex-c"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("ResolveUpstreamAuthIDs() = %#v, want %#v", got, want)
+	}
+	got, restricted = cfg.ResolveUpstreamAuthIDs("sk-open")
+	if !restricted || !slices.Equal(got, []string{"codex-b", "codex-c"}) {
+		t.Fatalf("ResolveUpstreamAuthIDs(sk-open) = %#v, %t", got, restricted)
+	}
+	if got, restricted = cfg.ResolveUpstreamAuthIDs("sk-unconfigured"); restricted || got != nil {
+		t.Fatalf("unconfigured key = %#v, %t, want unrestricted", got, restricted)
 	}
 }
 

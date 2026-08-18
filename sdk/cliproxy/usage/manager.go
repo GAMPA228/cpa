@@ -28,6 +28,13 @@ type Record struct {
 	APIKey       string
 	AuthID       string
 	AuthIndex    string
+	// ProxyMode is proxy, direct, or unknown for the effective configured route.
+	ProxyMode string
+	// ProxySource is auth, global, or none.
+	ProxySource string
+	// ProxyProtocol and ProxyEndpoint contain only connection-safe proxy address data.
+	ProxyProtocol string
+	ProxyEndpoint string
 	// AccessTokenSHA256 identifies the OAuth token version without exposing the token.
 	AccessTokenSHA256 string
 	AuthType          string
@@ -80,6 +87,7 @@ type requestedModelAliasContextKey struct{}
 type reasoningEffortContextKey struct{}
 type serviceTierContextKey struct{}
 type generateContextKey struct{}
+type globalProxyURLContextKey struct{}
 
 // WithRequestedModelAlias stores the client-requested model name for usage sinks.
 func WithRequestedModelAlias(ctx context.Context, alias string) context.Context {
@@ -91,6 +99,23 @@ func WithRequestedModelAlias(ctx context.Context, alias string) context.Context 
 		return ctx
 	}
 	return context.WithValue(ctx, requestedModelAliasContextKey{}, alias)
+}
+
+// WithGlobalProxyURL stores the configured global proxy for request route auditing.
+func WithGlobalProxyURL(ctx context.Context, proxyURL string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, globalProxyURLContextKey{}, strings.TrimSpace(proxyURL))
+}
+
+// GlobalProxyURLFromContext returns the configured global proxy for request route auditing.
+func GlobalProxyURLFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(globalProxyURLContextKey{}).(string)
+	return strings.TrimSpace(value)
 }
 
 // RequestedModelAliasFromContext returns the client-requested model name stored in ctx.
