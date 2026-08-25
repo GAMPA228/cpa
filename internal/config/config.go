@@ -28,6 +28,9 @@ type Config struct {
 	// RemoteManagement nests management-related options under 'remote-management'.
 	RemoteManagement RemoteManagement `yaml:"remote-management" json:"-"`
 
+	// ManagementUI configures optional pages exposed by the bundled management UI.
+	ManagementUI ManagementUIConfig `yaml:"management-ui" json:"management-ui"`
+
 	// Plugins configures dynamic plugin discovery and per-plugin settings.
 	Plugins PluginsConfig `yaml:"plugins" json:"plugins"`
 

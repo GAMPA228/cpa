@@ -1,10 +1,38 @@
 package config
 
 import (
+	"fmt"
+	"net/url"
 	"strings"
 
 	sdkpluginstore "github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginstore"
 )
+
+// NormalizeManagementUI trims and validates management panel integration URLs.
+func (cfg *Config) NormalizeManagementUI() error {
+	if cfg == nil {
+		return nil
+	}
+
+	rawURL := strings.TrimSpace(cfg.ManagementUI.ProxyNodesURL)
+	cfg.ManagementUI.ProxyNodesURL = rawURL
+	if rawURL == "" {
+		return nil
+	}
+
+	parsedURL, errParse := url.ParseRequestURI(rawURL)
+	if errParse != nil || parsedURL.Host == "" {
+		return fmt.Errorf("management-ui.proxy-nodes-url must be an absolute HTTP(S) URL")
+	}
+	if !strings.EqualFold(parsedURL.Scheme, "http") && !strings.EqualFold(parsedURL.Scheme, "https") {
+		return fmt.Errorf("management-ui.proxy-nodes-url must use HTTP or HTTPS")
+	}
+	if parsedURL.User != nil {
+		return fmt.Errorf("management-ui.proxy-nodes-url must not contain credentials")
+	}
+
+	return nil
+}
 
 // NormalizePluginsConfig applies default plugin configuration values.
 func (cfg *Config) NormalizePluginsConfig() {

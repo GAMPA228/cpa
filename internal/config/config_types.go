@@ -194,6 +194,12 @@ type RemoteManagement struct {
 	PanelGitHubRepository string `yaml:"panel-github-repository"`
 }
 
+// ManagementUIConfig holds optional management panel integrations.
+type ManagementUIConfig struct {
+	// ProxyNodesURL is the absolute HTTP(S) URL embedded by the proxy nodes page.
+	ProxyNodesURL string `yaml:"proxy-nodes-url,omitempty" json:"proxy-nodes-url,omitempty"`
+}
+
 // QuotaExceeded defines the behavior when API quota limits are exceeded.
 // It provides configuration options for automatic failover mechanisms.
 type QuotaExceeded struct {

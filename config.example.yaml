@@ -32,6 +32,11 @@ remote-management:
   # GitHub repository for the management control panel. Accepts a repository URL or releases API URL.
   panel-github-repository: "https://github.com/GAMPA228/Cli-Proxy-API-Management-Center"
 
+# Optional pages embedded by the management control panel.
+management-ui:
+  # Absolute HTTP(S) address shown in the "Proxy Nodes" sidebar page. Leave empty to hide the menu.
+  proxy-nodes-url: ""
+
 # Authentication directory (supports ~ for home directory)
 auth-dir: "~/.cli-proxy-api"
 
