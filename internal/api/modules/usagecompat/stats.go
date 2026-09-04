@@ -410,6 +410,9 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		if _, err := s.detailStore.Insert(statsKey, modelName, requestDetail); err != nil {
 			log.Warnf("usagecompat: failed to persist usage detail: %v", err)
 		}
+		if err := s.detailStore.insertQuotaEstimatorEvent(record); err != nil {
+			log.Warnf("usagecompat: failed to persist Codex quota estimator event: %v", err)
+		}
 	}
 }
 

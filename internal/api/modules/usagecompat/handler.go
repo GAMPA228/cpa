@@ -22,6 +22,10 @@ type StatisticsStore interface {
 	MergeSnapshot(snapshot StatisticsSnapshot) MergeResult
 }
 
+type quotaEstimatorStore interface {
+	QuotaEstimatorOverview(options QuotaEstimatorOptions) (QuotaEstimatorOverview, error)
+}
+
 // StatisticsEnabledController reads and updates the usage-statistics-enabled setting.
 type StatisticsEnabledController interface {
 	Enabled() (bool, error)
@@ -157,7 +161,9 @@ func (h *Handler) GetUsageDetails(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage statistics unavailable"})
 		return
 	}
-	store, ok := h.stats.(interface{ DetailsPage(DetailPageQuery) DetailPage })
+	store, ok := h.stats.(interface {
+		DetailsPage(DetailPageQuery) DetailPage
+	})
 	if !ok {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage details unavailable"})
 		return
@@ -176,13 +182,46 @@ func (h *Handler) GetUsageDetails(c *gin.Context) {
 	c.JSON(http.StatusOK, store.DetailsPage(query))
 }
 
+// GetQuotaEstimatorOverview returns Codex quota capacity estimates using built-in prices.
+func (h *Handler) GetQuotaEstimatorOverview(c *gin.Context) {
+	h.quotaEstimatorOverview(c, QuotaEstimatorOptions{})
+}
+
+// PostQuotaEstimatorOverview returns Codex quota capacity estimates using caller-supplied prices.
+func (h *Handler) PostQuotaEstimatorOverview(c *gin.Context) {
+	var options QuotaEstimatorOptions
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&options); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quota estimator options"})
+			return
+		}
+	}
+	h.quotaEstimatorOverview(c, options)
+}
+
+func (h *Handler) quotaEstimatorOverview(c *gin.Context, options QuotaEstimatorOptions) {
+	store, ok := h.stats.(quotaEstimatorStore)
+	if !ok || store == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "quota estimator unavailable"})
+		return
+	}
+	overview, err := store.QuotaEstimatorOverview(options)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, overview)
+}
+
 // GetUsageAggregate returns compact SQLite-backed aggregates for the usage dashboard.
 func (h *Handler) GetUsageAggregate(c *gin.Context) {
 	if h == nil || h.stats == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage statistics unavailable"})
 		return
 	}
-	store, ok := h.stats.(interface{ Aggregate(AggregateQuery) AggregateSnapshot })
+	store, ok := h.stats.(interface {
+		Aggregate(AggregateQuery) AggregateSnapshot
+	})
 	if !ok {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage aggregate unavailable"})
 		return
@@ -296,7 +335,9 @@ func (h *Handler) summarySnapshot() StatisticsSnapshot {
 }
 
 func (h *Handler) snapshotWithOptions(options SnapshotOptions) StatisticsSnapshot {
-	if store, ok := h.stats.(interface{ SnapshotWithOptions(SnapshotOptions) StatisticsSnapshot }); ok {
+	if store, ok := h.stats.(interface {
+		SnapshotWithOptions(SnapshotOptions) StatisticsSnapshot
+	}); ok {
 		return store.SnapshotWithOptions(options)
 	}
 	return h.stats.Snapshot()

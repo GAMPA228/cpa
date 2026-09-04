@@ -114,7 +114,7 @@ func (s *sqliteDetailStore) init() error {
 			return fmt.Errorf("sqlite init statement failed: %w", err)
 		}
 	}
-	return nil
+	return initQuotaEstimatorSchema(s.db)
 }
 
 func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDetail) (bool, error) {

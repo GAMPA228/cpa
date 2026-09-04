@@ -134,6 +134,26 @@ func SetResponseHeaders(ctx context.Context, headers http.Header) {
 	holder.headers = cloneHTTPHeader(headers)
 }
 
+// MergeResponseHeaders adds response headers to the request-scoped snapshot.
+// Existing values for the same header are replaced by the newest observation.
+func MergeResponseHeaders(ctx context.Context, headers http.Header) {
+	if ctx == nil || len(headers) == 0 {
+		return
+	}
+	holder, ok := ctx.Value(responseHeadersKey{}).(*responseHeadersHolder)
+	if !ok || holder == nil {
+		return
+	}
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+	if holder.headers == nil {
+		holder.headers = make(http.Header, len(headers))
+	}
+	for key, values := range headers {
+		holder.headers[key] = append([]string(nil), values...)
+	}
+}
+
 func GetResponseStatus(ctx context.Context) int {
 	if ctx == nil {
 		return 0

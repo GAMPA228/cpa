@@ -46,6 +46,12 @@ func TestModuleRegistersUsageCompatibilityRoutes(t *testing.T) {
 	if got := int64(getJSONNumber(t, usageResponse["failed_requests"])); got != 0 {
 		t.Fatalf("failed_requests = %d, want 0", got)
 	}
+	quotaResponse := performJSONRequest(t, router, http.MethodPost, "/v0/management/usage/quota-estimator", map[string]any{
+		"prices": map[string]any{"custom-model": map[string]any{"prompt": 1, "completion": 2, "cache": 0.1}},
+	})
+	if accounts, ok := quotaResponse["accounts"].([]any); !ok || len(accounts) != 0 {
+		t.Fatalf("quota estimator accounts = %#v, want empty array", quotaResponse["accounts"])
+	}
 
 	importPayload := map[string]any{
 		"version": 1,

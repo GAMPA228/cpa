@@ -101,6 +101,8 @@ func (m *Module) RegisterRoutes(group gin.IRoutes) {
 	group.GET("/usage", m.handler.GetUsageStatistics)
 	group.GET("/usage/aggregate", m.handler.GetUsageAggregate)
 	group.GET("/usage/details", m.handler.GetUsageDetails)
+	group.GET("/usage/quota-estimator", m.handler.GetQuotaEstimatorOverview)
+	group.POST("/usage/quota-estimator", m.handler.PostQuotaEstimatorOverview)
 	group.GET("/usage/export", m.handler.ExportUsageStatistics)
 	group.POST("/usage/import", m.handler.ImportUsageStatistics)
 	group.GET("/usage-statistics-enabled", m.handler.GetUsageStatisticsEnabled)
