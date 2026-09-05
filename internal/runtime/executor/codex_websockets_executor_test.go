@@ -1176,6 +1176,8 @@ func TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth(t *testing.T) {
 		Codex: config.CodexConfig{DisableCodexCloaking: true},
 		CodexHeaderDefaults: config.CodexHeaderDefaults{
 			UserAgent:    "my-codex-client/1.0",
+			Version:      "0.153.3",
+			Originator:   "my-codex-client",
 			BetaFeatures: "feature-a,feature-b",
 		},
 	}
@@ -1188,6 +1190,12 @@ func TestApplyCodexWebsocketHeadersUsesConfigDefaultsForOAuth(t *testing.T) {
 
 	if got := headers.Get("User-Agent"); got != "my-codex-client/1.0" {
 		t.Fatalf("User-Agent = %s, want %s", got, "my-codex-client/1.0")
+	}
+	if got := headers.Get("Version"); got != "0.153.3" {
+		t.Fatalf("Version = %s, want %s", got, "0.153.3")
+	}
+	if got := headers.Get("Originator"); got != "my-codex-client" {
+		t.Fatalf("Originator = %s, want %s", got, "my-codex-client")
 	}
 	if got := headers.Get("x-codex-beta-features"); got != "feature-a,feature-b" {
 		t.Fatalf("x-codex-beta-features = %s, want %s", got, "feature-a,feature-b")
@@ -1871,8 +1879,8 @@ func TestApplyModelHeaderOverridesPreservesCanonicalIdentity(t *testing.T) {
 	applyCodexHeaders(req, auth, "oauth-token", true, cfg)
 	applyModelHeaderOverrides(req.Header, "gpt-5.6-luna", cfg)
 
-	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
-		t.Fatalf("User-Agent = %q, want %q", got, codexUserAgent)
+	if got := req.Header.Get("User-Agent"); got != "config-ua" {
+		t.Fatalf("User-Agent = %q, want %q", got, "config-ua")
 	}
 	if got := req.Header.Get("Originator"); got != codexOriginator {
 		t.Fatalf("Originator = %q, want %q", got, codexOriginator)
@@ -1882,8 +1890,8 @@ func TestApplyModelHeaderOverridesPreservesCanonicalIdentity(t *testing.T) {
 	}
 
 	applyModelHeaderOverrides(req.Header, "gpt-5.4", cfg)
-	if got := req.Header.Get("User-Agent"); got != codexUserAgent {
-		t.Fatalf("User-Agent after no-op override = %q, want %q", got, codexUserAgent)
+	if got := req.Header.Get("User-Agent"); got != "config-ua" {
+		t.Fatalf("User-Agent after no-op override = %q, want %q", got, "config-ua")
 	}
 }
 

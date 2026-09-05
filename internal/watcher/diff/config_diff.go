@@ -115,6 +115,18 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Codex.DisableCodexCloaking != newCfg.Codex.DisableCodexCloaking {
 		changes = append(changes, fmt.Sprintf("codex.disable-codex-cloaking: %t -> %t", oldCfg.Codex.DisableCodexCloaking, newCfg.Codex.DisableCodexCloaking))
 	}
+	if oldCfg.CodexHeaderDefaults.UserAgent != newCfg.CodexHeaderDefaults.UserAgent {
+		changes = append(changes, fmt.Sprintf("codex-header-defaults.user-agent: %q -> %q", oldCfg.CodexHeaderDefaults.UserAgent, newCfg.CodexHeaderDefaults.UserAgent))
+	}
+	if oldCfg.CodexHeaderDefaults.Version != newCfg.CodexHeaderDefaults.Version {
+		changes = append(changes, fmt.Sprintf("codex-header-defaults.version: %q -> %q", oldCfg.CodexHeaderDefaults.Version, newCfg.CodexHeaderDefaults.Version))
+	}
+	if oldCfg.CodexHeaderDefaults.Originator != newCfg.CodexHeaderDefaults.Originator {
+		changes = append(changes, fmt.Sprintf("codex-header-defaults.originator: %q -> %q", oldCfg.CodexHeaderDefaults.Originator, newCfg.CodexHeaderDefaults.Originator))
+	}
+	if oldCfg.CodexHeaderDefaults.BetaFeatures != newCfg.CodexHeaderDefaults.BetaFeatures {
+		changes = append(changes, fmt.Sprintf("codex-header-defaults.beta-features: %q -> %q", oldCfg.CodexHeaderDefaults.BetaFeatures, newCfg.CodexHeaderDefaults.BetaFeatures))
+	}
 	if oldCfg.Codex.StreamBootstrapBuffering != newCfg.Codex.StreamBootstrapBuffering {
 		changes = append(changes, fmt.Sprintf("codex.stream-bootstrap-buffering: %t -> %t", oldCfg.Codex.StreamBootstrapBuffering, newCfg.Codex.StreamBootstrapBuffering))
 	}

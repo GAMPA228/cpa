@@ -123,11 +123,13 @@ type ClaudeHeaderDefaults struct {
 	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
 }
 
-// CodexHeaderDefaults configures fallback header values injected into Codex
-// model requests for OAuth/file-backed auth when the client omits them.
-// UserAgent applies to HTTP and websocket requests; BetaFeatures only applies to websockets.
+// CodexHeaderDefaults configures Codex identity headers injected into model
+// requests. UserAgent, Version, and Originator apply to HTTP and websocket
+// requests; BetaFeatures only applies to websockets.
 type CodexHeaderDefaults struct {
 	UserAgent    string `yaml:"user-agent" json:"user-agent"`
+	Version      string `yaml:"version" json:"version"`
+	Originator   string `yaml:"originator" json:"originator"`
 	BetaFeatures string `yaml:"beta-features" json:"beta-features"`
 }
 

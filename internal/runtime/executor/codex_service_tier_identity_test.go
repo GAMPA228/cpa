@@ -40,7 +40,7 @@ func TestCodexFastRequestKeepsCanonicalIdentityAfterModelOverride(t *testing.T) 
 	applyCodexHeaders(req, nil, "oauth-token", true, cfg)
 	applyModelHeaderOverrides(req.Header, "gpt-5.6-luna", cfg)
 
-	const wantUserAgent = "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	const wantUserAgent = "codex-tui/0.153.3 (Ubuntu 22.4.0; x86_64) xterm-256color"
 	if got := req.Header.Get("User-Agent"); got != wantUserAgent {
 		t.Fatalf("User-Agent = %q, want %q", got, wantUserAgent)
 	}
@@ -159,14 +159,14 @@ func TestCodexExecutorForwardsFastRoutingHintToOAuthUpstream(t *testing.T) {
 	if gotRoutingHint != "model=gpt-5.5;tier=priority" {
 		t.Fatalf("%s = %q, want %q", codexRoutingHintHeader, gotRoutingHint, "model=gpt-5.5;tier=priority")
 	}
-	if gotUserAgent != "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color" {
+	if gotUserAgent != "codex-tui/0.153.3 (Ubuntu 22.4.0; x86_64) xterm-256color" {
 		t.Fatalf("User-Agent = %q, want canonical Codex TUI identity", gotUserAgent)
 	}
 	if gotOriginator != "codex-tui" {
 		t.Fatalf("Originator = %q, want codex-tui", gotOriginator)
 	}
-	if gotVersion != "0.146.0" {
-		t.Fatalf("Version = %q, want 0.146.0", gotVersion)
+	if gotVersion != "0.153.3" {
+		t.Fatalf("Version = %q, want 0.153.3", gotVersion)
 	}
 	if gotBeta != "responses=experimental" {
 		t.Fatalf("OpenAI-Beta = %q, want responses=experimental", gotBeta)

@@ -138,8 +138,8 @@ type Config struct {
 	// ServiceTierPolicy configures server-side Codex priority service tier enforcement.
 	ServiceTierPolicy ServiceTierPolicyConfig `yaml:"service-tier-policy" json:"service-tier-policy"`
 
-	// CodexHeaderDefaults configures fallback headers for Codex OAuth model requests.
-	// These are used only when the client does not send its own headers.
+	// CodexHeaderDefaults configures the Codex client identity headers used for
+	// OAuth/file-backed model requests and as fallbacks when cloaking is disabled.
 	CodexHeaderDefaults CodexHeaderDefaults `yaml:"codex-header-defaults" json:"codex-header-defaults"`
 
 	// ClaudeKey defines a list of Claude API key configurations as specified in the YAML configuration file.

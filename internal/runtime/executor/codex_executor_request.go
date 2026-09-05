@@ -23,8 +23,8 @@ import (
 )
 
 const (
-	codexClientVersion         = "0.146.0"
-	codexUserAgent             = "codex-tui/0.146.0 (Ubuntu 22.4.0; x86_64) xterm-256color"
+	codexClientVersion         = "0.153.3"
+	codexUserAgent             = "codex-tui/0.153.3 (Ubuntu 22.4.0; x86_64) xterm-256color"
 	codexOriginator            = "codex-tui"
 	codexDefaultImageToolModel = "gpt-image-2"
 	codexResponsesBetaHeader   = "responses=experimental"
@@ -353,7 +353,8 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 	misc.EnsureHeader(r.Header, ginHeaders, "Session-Id", "")
 	misc.EnsureHeader(r.Header, ginHeaders, "X-Openai-Internal-Codex-Responses-Lite", "")
 
-	cfgUserAgent, _ := codexHeaderDefaults(cfg, auth)
+	cfgUserAgent, _, cfgVersion, cfgOriginator := codexHeaderDefaults(cfg, auth)
+	ensureHeaderWithPriority(r.Header, ginHeaders, "Version", cfgVersion, "")
 	ensureHeaderWithConfigPrecedence(r.Header, ginHeaders, "User-Agent", cfgUserAgent, codexUserAgent)
 
 	if stream {
@@ -367,7 +368,11 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 	if originator := strings.TrimSpace(ginHeaders.Get("Originator")); originator != "" {
 		r.Header.Set("Originator", originator)
 	} else if !isAPIKey {
-		r.Header.Set("Originator", codexOriginator)
+		if cfgOriginator != "" {
+			r.Header.Set("Originator", cfgOriginator)
+		} else {
+			r.Header.Set("Originator", codexOriginator)
+		}
 	}
 	if !isAPIKey {
 		if auth != nil && auth.Metadata != nil {
@@ -391,9 +396,29 @@ func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config) {
 	if headers == nil || !codexCloakingEnabled(cfg) {
 		return
 	}
-	headers.Set("User-Agent", codexUserAgent)
-	headers.Set("Originator", codexOriginator)
-	headers.Set("Version", codexClientVersion)
+	userAgent, version, originator := codexCloakingHeaderValues(cfg)
+	headers.Set("User-Agent", userAgent)
+	headers.Set("Originator", originator)
+	headers.Set("Version", version)
+}
+
+func codexCloakingHeaderValues(cfg *config.Config) (userAgent, version, originator string) {
+	userAgent = codexUserAgent
+	version = codexClientVersion
+	originator = codexOriginator
+	if cfg == nil {
+		return userAgent, version, originator
+	}
+	if value := strings.TrimSpace(cfg.CodexHeaderDefaults.UserAgent); value != "" {
+		userAgent = value
+	}
+	if value := strings.TrimSpace(cfg.CodexHeaderDefaults.Version); value != "" {
+		version = value
+	}
+	if value := strings.TrimSpace(cfg.CodexHeaderDefaults.Originator); value != "" {
+		originator = value
+	}
+	return userAgent, version, originator
 }
 
 func codexCloakingEnabled(cfg *config.Config) bool {
