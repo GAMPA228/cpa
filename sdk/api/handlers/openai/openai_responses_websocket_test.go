@@ -1190,6 +1190,10 @@ func TestNormalizeResponsesWebsocketRequestCreate(t *testing.T) {
 }
 
 func TestNormalizeResponseSubsequentRequestBoundsTranscriptAllocations(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("allocation budgets are not meaningful with race detector instrumentation")
+	}
+
 	makeInput := func(count int, role string) string {
 		var input strings.Builder
 		input.WriteByte('[')
@@ -1230,6 +1234,10 @@ func TestNormalizeResponseSubsequentRequestBoundsTranscriptAllocations(t *testin
 }
 
 func TestResponsesWebsocketFallbackTurnBoundsTranscriptAllocations(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("allocation budgets are not meaningful with race detector instrumentation")
+	}
+
 	makeInput := func(count int, role string) string {
 		var input strings.Builder
 		input.WriteByte('[')
@@ -1268,6 +1276,120 @@ func TestResponsesWebsocketFallbackTurnBoundsTranscriptAllocations(t *testing.T)
 	if allocatedBytes := result.AllocedBytesPerOp(); allocatedBytes > maxAllocatedBytes {
 		t.Fatalf("processing a fallback turn with %d input bytes allocated %d bytes per operation, want at most %d", inputBytes, allocatedBytes, maxAllocatedBytes)
 	}
+}
+
+func TestResponsesWebsocketToolCacheScansDoNotCopyLargePayloads(t *testing.T) {
+	const maxAllocatedBytes = 256 << 10
+	padding := strings.Repeat("x", 4<<20)
+
+	requestPayload := []byte(fmt.Sprintf(
+		`{"input":[{"type":"message","id":"message-1","call_id":"not-a-tool","content":%q},{"type":"function_call","id":"fc-1","call_id":"call-1","name":"lookup","arguments":"{}"},{"type":"function_call_output","id":"fco-1","call_id":"call-1","output":"ok"}]}`,
+		padding,
+	))
+	t.Run("request", func(t *testing.T) {
+		result := testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				payload, turn := prepareResponsesWebsocketFallbackTurn("large-request-session", requestPayload)
+				runtime.KeepAlive(payload)
+				runtime.KeepAlive(turn)
+			}
+		})
+		t.Logf("request tool-cache scan allocated %d bytes per operation", result.AllocedBytesPerOp())
+		if allocatedBytes := result.AllocedBytesPerOp(); allocatedBytes > maxAllocatedBytes {
+			t.Fatalf("request tool-cache scan allocated %d bytes per operation, want at most %d", allocatedBytes, maxAllocatedBytes)
+		}
+	})
+
+	responsePayload := []byte(fmt.Sprintf(
+		`{"type":"response.completed","response":{"output":[{"type":"message","id":"message-1","content":%q},{"type":"function_call","id":"fc-1","call_id":"call-1","name":"lookup","arguments":"{}"}]}}`,
+		padding,
+	))
+	t.Run("response", func(t *testing.T) {
+		turn := newResponsesWebsocketToolCacheTurn("large-response-session")
+		result := testing.Benchmark(func(b *testing.B) {
+			b.ReportAllocs()
+			for index := 0; index < b.N; index++ {
+				turn.recordResponse(responsePayload)
+				runtime.KeepAlive(turn)
+			}
+		})
+		t.Logf("response tool-cache scan allocated %d bytes per operation", result.AllocedBytesPerOp())
+		if allocatedBytes := result.AllocedBytesPerOp(); allocatedBytes > maxAllocatedBytes {
+			t.Fatalf("response tool-cache scan allocated %d bytes per operation, want at most %d", allocatedBytes, maxAllocatedBytes)
+		}
+	})
+}
+
+func TestResponsesWebsocketToolCacheScanPreservesJSONRequestSemantics(t *testing.T) {
+	t.Run("rejects trailing data", func(t *testing.T) {
+		payload := []byte(`{"input":[{"type":"function_call","id":"fc-1","call_id":"call-1","name":"lookup","arguments":"{}"}]} trailing`)
+		repaired, turn := prepareResponsesWebsocketFallbackTurn("trailing-data-session", payload)
+		if !bytes.Equal(repaired, payload) {
+			t.Fatalf("repaired payload = %s, want original malformed payload", repaired)
+		}
+		if len(turn.calls) != 0 || len(turn.outputs) != 0 {
+			t.Fatalf("malformed payload recorded calls=%d outputs=%d, want none", len(turn.calls), len(turn.outputs))
+		}
+	})
+
+	t.Run("uses last duplicate input", func(t *testing.T) {
+		payload := []byte(`{"input":[{"type":"function_call","id":"fc-1","call_id":"call-1","name":"lookup","arguments":"{}"}],"input":[{"type":"message","id":"message-1","role":"user","content":"hello"}]}`)
+		repaired, turn := prepareResponsesWebsocketFallbackTurn("duplicate-input-session", payload)
+		if !bytes.Equal(repaired, payload) {
+			t.Fatalf("repaired payload = %s, want original payload", repaired)
+		}
+		if len(turn.calls) != 0 || len(turn.outputs) != 0 {
+			t.Fatalf("duplicate input recorded calls=%d outputs=%d from the shadowed value, want none", len(turn.calls), len(turn.outputs))
+		}
+	})
+
+	t.Run("repairs last case-insensitive duplicate input", func(t *testing.T) {
+		payload := []byte(`{"input":[{"type":"message","id":"shadowed","role":"user","content":"ignore"}],"INPUT":[{"type":"function_call_output","id":"fco-1","call_id":"missing-call","output":"orphan"}]}`)
+		repaired, _ := prepareResponsesWebsocketFallbackTurn("duplicate-case-input-session", payload)
+		var request struct {
+			Input []json.RawMessage `json:"input"`
+		}
+		if errUnmarshal := json.Unmarshal(repaired, &request); errUnmarshal != nil {
+			t.Fatalf("unmarshal repaired payload: %v", errUnmarshal)
+		}
+		if len(request.Input) != 0 {
+			t.Fatalf("repaired effective input count = %d, want 0", len(request.Input))
+		}
+	})
+
+	t.Run("repairs last exact duplicate input", func(t *testing.T) {
+		payload := []byte(`{"input":[{"type":"message","id":"shadowed","role":"user","content":"ignore"}],"input":[{"type":"function_call_output","id":"fco-1","call_id":"missing-call","output":"orphan"}]}`)
+		repaired, _ := prepareResponsesWebsocketFallbackTurn("duplicate-exact-input-session", payload)
+		var request struct {
+			Input []json.RawMessage `json:"input"`
+		}
+		if errUnmarshal := json.Unmarshal(repaired, &request); errUnmarshal != nil {
+			t.Fatalf("unmarshal repaired payload: %v", errUnmarshal)
+		}
+		if len(request.Input) != 0 {
+			t.Fatalf("repaired effective input count = %d, want 0", len(request.Input))
+		}
+	})
+
+	t.Run("rejects invalid earlier duplicate input", func(t *testing.T) {
+		payload := []byte(`{"input":{},"input":[{"type":"function_call","id":"fc-1","call_id":"call-1","name":"lookup","arguments":"{}"},{"type":"function_call_output","id":"fco-1","call_id":"call-1","output":"ok"}]}`)
+		repaired, turn := prepareResponsesWebsocketFallbackTurn("invalid-duplicate-input-session", payload)
+		if !bytes.Equal(repaired, payload) {
+			t.Fatalf("repaired payload = %s, want original payload with invalid duplicate input", repaired)
+		}
+		if len(turn.calls) != 0 || len(turn.outputs) != 0 {
+			t.Fatalf("invalid duplicate input recorded calls=%d outputs=%d, want none", len(turn.calls), len(turn.outputs))
+		}
+	})
+
+	t.Run("uses last duplicate previous response id", func(t *testing.T) {
+		payload := []byte(`{"previous_response_id":"resp-first","previous_response_id":null,"input":[{"type":"function_call_output","id":"fco-1","call_id":"missing-call","output":"orphan"}]}`)
+		repaired, _ := prepareResponsesWebsocketFallbackTurn("duplicate-previous-response-session", payload)
+		if inputCount := gjson.GetBytes(repaired, "input.#").Int(); inputCount != 0 {
+			t.Fatalf("repaired input count = %d, want 0 when the last previous_response_id is null", inputCount)
+		}
+	})
 }
 
 func TestNormalizeResponsesWebsocketRequestCreateWithHistory(t *testing.T) {
@@ -1981,13 +2103,16 @@ func TestResponsesWebsocketToolCacheTurnDoesNotRetainRequestBackingStorage(t *te
 	}
 	copy(payload[len(prefix)+paddingSize:], suffix)
 
-	_, turn := prepareResponsesWebsocketFallbackTurn("backing-storage-session", payload)
+	repaired, turn := prepareResponsesWebsocketFallbackTurn("backing-storage-session", payload)
 	payload = nil
+	repaired = nil
+	runtime.GC()
 	runtime.GC()
 
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	runtime.KeepAlive(turn)
+	runtime.KeepAlive(repaired)
 	retainedHeap := int64(after.HeapAlloc) - int64(before.HeapAlloc)
 	if retainedHeap > maxRetainedHeap {
 		t.Fatalf("tool cache turn retained %d bytes after request release, want at most %d", retainedHeap, maxRetainedHeap)
@@ -5582,6 +5707,40 @@ func TestNormalizeSubsequentRequestCompactMergesWhenCompactionReplayUnsupported(
 	}
 }
 
+func TestNormalizeSubsequentRequestDropsConsumedCompactionTrigger(t *testing.T) {
+	lastRequest := []byte(`{"model":"gpt-5.6-sol","stream":true,"input":[
+		{"type":"message","role":"user","id":"msg-old","content":"old prompt"}
+	]}`)
+	triggerRequest := []byte(`{"type":"response.create","previous_response_id":"resp-before-compact","input":[
+		{"type":"message","role":"user","id":"msg-tool-output","content":"done"},
+		{"type":"compaction_trigger"}
+	]}`)
+
+	_, stateAfterTrigger, errMsg := normalizeResponsesWebsocketRequestWithMode(triggerRequest, lastRequest, nil, false, false)
+	if errMsg != nil {
+		t.Fatalf("normalize trigger request: %v", errMsg.Error)
+	}
+
+	compactionOutput := []byte(`[
+		{"type":"compaction","id":"cmp-1","encrypted_content":"opaque"}
+	]`)
+	replayRequest := []byte(`{"type":"response.create","input":[
+		{"type":"message","role":"developer","id":"msg-new-context","content":"new context"},
+		{"type":"compaction","id":"cmp-1","encrypted_content":"opaque"},
+		{"type":"message","role":"user","id":"msg-next","content":"continue"}
+	]}`)
+
+	normalized, _, errMsg := normalizeResponsesWebsocketRequestWithMode(replayRequest, stateAfterTrigger, compactionOutput, false, false)
+	if errMsg != nil {
+		t.Fatalf("normalize compact replay: %v", errMsg.Error)
+	}
+	for _, item := range gjson.GetBytes(normalized, "input").Array() {
+		if item.Get("type").String() == "compaction_trigger" {
+			t.Fatalf("consumed compaction_trigger was replayed: %s", normalized)
+		}
+	}
+}
+
 func TestNormalizeSubsequentRequestIncrementalInputStillMerges(t *testing.T) {
 	// Normal incremental flow: user sends function_call_output (no assistant message).
 	lastRequest := []byte(`{"model":"gpt-5.4","stream":true,"input":[
@@ -5640,5 +5799,332 @@ func TestNormalizeSubsequentRequestAssistantInputTriggersTranscriptReplacement(t
 	}
 	if input[0].Get("id").String() != "msg-3" {
 		t.Fatalf("input[0].id = %q, want %q", input[0].Get("id").String(), "msg-3")
+	}
+}
+
+func TestForwardResponsesWebsocketEmitsPeriodicPingControlFrames(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	serverErrCh := make(chan error, 1)
+	data := make(chan []byte)
+	errCh := make(chan *interfaces.ErrorMessage)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := responsesWebsocketUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = r
+
+		cfg := &sdkconfig.SDKConfig{
+			Streaming: sdkconfig.StreamingConfig{
+				KeepAliveSeconds: 1,
+			},
+		}
+		h := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(cfg, nil))
+
+		_, _, _, errMsg, errForward := h.forwardResponsesWebsocket(
+			ctx,
+			newResponsesWebsocketWriter(conn),
+			func(...interface{}) {},
+			data,
+			errCh,
+			newInMemoryWebsocketTimelineLog(),
+			"session-keepalive-test",
+		)
+		if errMsg != nil {
+			serverErrCh <- fmt.Errorf("unexpected error message: %v", errMsg.Error)
+			return
+		}
+		if errForward != nil {
+			serverErrCh <- fmt.Errorf("unexpected forward error: %v", errForward)
+			return
+		}
+		serverErrCh <- nil
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer func() { _ = clientConn.Close() }()
+
+	pingReceived := make(chan struct{}, 1)
+	clientConn.SetPingHandler(func(appData string) error {
+		select {
+		case pingReceived <- struct{}{}:
+		default:
+		}
+		return clientConn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
+	})
+
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		for {
+			_, _, errRead := clientConn.ReadMessage()
+			if errRead != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-pingReceived:
+		// Received expected Ping control frame while upstream is waiting.
+	case <-time.After(1500 * time.Millisecond):
+		t.Fatal("expected websocket Ping control frame during upstream wait, got none")
+	}
+
+	// Unblock forwardResponsesWebsocket with terminal completion.
+	data <- []byte(`{"type":"response.done","response":{"id":"resp-ping-1","output":[]}}`)
+	close(data)
+	close(errCh)
+
+	select {
+	case serverErr := <-serverErrCh:
+		if serverErr != nil {
+			t.Fatalf("server error: %v", serverErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server timed out completing forwardResponsesWebsocket")
+	}
+
+	<-clientDone
+}
+
+func TestForwardResponsesWebsocketPingKeepAliveOptionsOverride(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	serverErrCh := make(chan error, 1)
+	data := make(chan []byte)
+	errCh := make(chan *interfaces.ErrorMessage)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := responsesWebsocketUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = r
+
+		interval := 20 * time.Millisecond
+		h := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil))
+
+		_, _, _, errMsg, errForward := h.forwardResponsesWebsocket(
+			ctx,
+			newResponsesWebsocketWriter(conn),
+			func(...interface{}) {},
+			data,
+			errCh,
+			newInMemoryWebsocketTimelineLog(),
+			"session-keepalive-override",
+			responsesWebsocketForwardOptions{
+				keepAliveInterval: &interval,
+			},
+		)
+		if errMsg != nil {
+			serverErrCh <- fmt.Errorf("unexpected error message: %v", errMsg.Error)
+			return
+		}
+		if errForward != nil {
+			serverErrCh <- fmt.Errorf("unexpected forward error: %v", errForward)
+			return
+		}
+		serverErrCh <- nil
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer func() { _ = clientConn.Close() }()
+
+	pingReceived := make(chan struct{}, 1)
+	clientConn.SetPingHandler(func(appData string) error {
+		select {
+		case pingReceived <- struct{}{}:
+		default:
+		}
+		return clientConn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(time.Second))
+	})
+
+	clientDone := make(chan struct{})
+	go func() {
+		defer close(clientDone)
+		for {
+			_, _, errRead := clientConn.ReadMessage()
+			if errRead != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-pingReceived:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected websocket Ping control frame via option override, got none")
+	}
+
+	data <- []byte(`{"type":"response.done","response":{"id":"resp-override","output":[]}}`)
+	close(data)
+	close(errCh)
+
+	select {
+	case serverErr := <-serverErrCh:
+		if serverErr != nil {
+			t.Fatalf("server error: %v", serverErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server timed out completing forwardResponsesWebsocket")
+	}
+
+	<-clientDone
+}
+
+func TestResponsesWebsocketWriterWritePing(t *testing.T) {
+	// Nil writer check
+	var nilWriter *responsesWebsocketWriter
+	if err := nilWriter.writePing(); err == nil {
+		t.Fatal("expected error on nil writer.writePing(), got nil")
+	}
+
+	// Active connection and closed writer checks
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := responsesWebsocketUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		writer := newResponsesWebsocketWriter(conn)
+		if errPing := writer.writePing(); errPing != nil {
+			t.Errorf("writePing() error = %v, want nil", errPing)
+		}
+
+		writer.closing.Store(true)
+		if errPing := writer.writePing(); !errors.Is(errPing, websocket.ErrCloseSent) {
+			t.Errorf("writePing() after closing = %v, want ErrCloseSent", errPing)
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer func() { _ = clientConn.Close() }()
+
+	pingReceived := make(chan struct{}, 1)
+	clientConn.SetPingHandler(func(string) error {
+		select {
+		case pingReceived <- struct{}{}:
+		default:
+		}
+		return nil
+	})
+
+	go func() {
+		for {
+			if _, _, errRead := clientConn.ReadMessage(); errRead != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-pingReceived:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected ping from writer.writePing(), got none")
+	}
+}
+
+func TestForwardResponsesWebsocketPingWriteFailureAbortsSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	serverErrCh := make(chan error, 1)
+	cancelledCh := make(chan error, 1)
+	data := make(chan []byte)
+	errCh := make(chan *interfaces.ErrorMessage)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := responsesWebsocketUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			serverErrCh <- err
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = r
+
+		interval := 10 * time.Millisecond
+		h := NewOpenAIResponsesAPIHandler(handlers.NewBaseAPIHandlers(&sdkconfig.SDKConfig{}, nil))
+
+		_, _, _, errMsg, errForward := h.forwardResponsesWebsocket(
+			ctx,
+			newResponsesWebsocketWriter(conn),
+			func(errs ...interface{}) {
+				if len(errs) > 0 {
+					if errVal, ok := errs[0].(error); ok {
+						cancelledCh <- errVal
+						return
+					}
+				}
+				cancelledCh <- nil
+			},
+			data,
+			errCh,
+			newInMemoryWebsocketTimelineLog(),
+			"session-ping-fail",
+			responsesWebsocketForwardOptions{
+				keepAliveInterval: &interval,
+			},
+		)
+		if errMsg != nil {
+			serverErrCh <- fmt.Errorf("unexpected error message: %v", errMsg.Error)
+			return
+		}
+		serverErrCh <- errForward
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial websocket: %v", err)
+	}
+
+	// Close client connection immediately so the next server Ping write fails.
+	_ = clientConn.Close()
+
+	select {
+	case serverErr := <-serverErrCh:
+		if serverErr == nil {
+			t.Fatal("expected error on server ping write failure, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server timed out awaiting ping write abort")
+	}
+
+	select {
+	case cancelErr := <-cancelledCh:
+		if cancelErr == nil {
+			t.Fatal("expected cancel callback to be invoked with ping error, got nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out awaiting cancel callback on ping write failure")
 	}
 }

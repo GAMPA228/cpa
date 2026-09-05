@@ -198,6 +198,9 @@ func LoadConfigOptional(configFile string, optional bool) (*Config, error) {
 	// Normalize downstream API key based model rewrite rules.
 	cfg.SanitizeModelRewrite()
 
+	// Normalize global OAuth request-scoped error rules.
+	cfg.SanitizeOAuthRequestScopedErrors()
+
 	// Validate raw payload rules and drop invalid entries.
 	cfg.SanitizePayloadRules()
 

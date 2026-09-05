@@ -110,6 +110,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.SanitizeThinkingPolicy()
 	cfg.SanitizeServiceTierPolicy()
 	cfg.SanitizeModelRewrite()
+	cfg.SanitizeOAuthRequestScopedErrors()
 	cfg.SanitizePayloadRules()
 
 	return &cfg, nil
