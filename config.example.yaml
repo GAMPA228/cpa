@@ -293,6 +293,10 @@ codex:
   # Some superstitious users believe request tracking identifiers can be used
   # as evidence for TOS enforcement bans; this option only satisfies those odd concerns.
   identity-confuse: false
+  # One stable device per OAuth account, with isolated pseudonymous client sessions.
+  # Omit to preserve legacy behavior; false explicitly disables identity remapping.
+  # Back up auth-dir/.codex-identity-key with your credentials to preserve identities.
+  single-device: true
   # Disable forcing the current official Codex User-Agent, Originator, and Version
   # headers on HTTP/SSE and WebSocket requests.
   disable-codex-cloaking: false

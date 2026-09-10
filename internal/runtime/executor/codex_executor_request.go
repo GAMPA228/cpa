@@ -88,6 +88,7 @@ func (e *CodexExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Auth
 }
 
 type codexIdentityConfuseState struct {
+	singleDevice           *helps.CodexIdentity
 	enabled                bool
 	authID                 string
 	originalPromptCacheKey string
@@ -146,6 +147,11 @@ func (e *CodexExecutor) cacheHelper(ctx context.Context, from sdktranslator.Form
 	rawJSON = helps.SanitizeCodexInputItemIDs(rawJSON)
 	var identityState codexIdentityConfuseState
 	rawJSON, identityState = applyCodexIdentityConfuseBody(e.cfg, auth, userPayload, rawJSON)
+	var errIdentity error
+	rawJSON, identityState.singleDevice, errIdentity = helps.PrepareCodexIdentity(ctx, e.cfg, auth, headers, rawJSON)
+	if errIdentity != nil {
+		return nil, nil, codexIdentityConfuseState{}, errIdentity
+	}
 	if identityState.promptCacheKey != "" {
 		cache.ID = identityState.promptCacheKey
 	}
@@ -189,6 +195,10 @@ func applyCodexIdentityConfuseHeaders(headers http.Header, state *codexIdentityC
 	if headers == nil {
 		return
 	}
+	if state != nil && state.singleDevice != nil {
+		state.singleDevice.ApplyHeaders(headers)
+		return
+	}
 	if state == nil || !state.enabled {
 		return
 	}
@@ -229,6 +239,9 @@ func applyCodexTurnMetadataIdentityConfuse(rawTurnMetadata string, state *codexI
 }
 
 func applyCodexIdentityConfuseResponsePayload(payload []byte, state codexIdentityConfuseState) []byte {
+	if state.singleDevice != nil {
+		return state.singleDevice.RestoreResponse(payload)
+	}
 	payload = replaceCodexIdentityResponsePayload(payload, state.originalPromptCacheKey, state.promptCacheKey)
 	for _, turnID := range state.turnIDs {
 		payload = replaceCodexIdentityResponsePayload(payload, turnID.original, turnID.confused)
@@ -237,6 +250,9 @@ func applyCodexIdentityConfuseResponsePayload(payload []byte, state codexIdentit
 }
 
 func applyCodexIdentityExposeResponsePayload(payload []byte, state codexIdentityConfuseState) []byte {
+	if state.singleDevice != nil {
+		return payload
+	}
 	payload = replaceCodexIdentityResponsePayload(payload, state.promptCacheKey, state.originalPromptCacheKey)
 	for _, turnID := range state.turnIDs {
 		payload = replaceCodexIdentityResponsePayload(payload, turnID.confused, turnID.original)
@@ -269,7 +285,7 @@ func replaceCodexIdentityResponsePayload(payload []byte, from string, to string)
 }
 
 func codexIdentityConfuseEnabled(cfg *config.Config) bool {
-	if cfg == nil || !cfg.Codex.IdentityConfuse {
+	if cfg == nil || cfg.Codex.SingleDevice != nil || !cfg.Codex.IdentityConfuse {
 		return false
 	}
 	strategy := strings.ToLower(strings.TrimSpace(cfg.Routing.Strategy))

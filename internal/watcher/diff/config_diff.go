@@ -115,6 +115,9 @@ func BuildConfigChangeDetails(oldCfg, newCfg *config.Config) []string {
 	if oldCfg.Codex.DisableCodexCloaking != newCfg.Codex.DisableCodexCloaking {
 		changes = append(changes, fmt.Sprintf("codex.disable-codex-cloaking: %t -> %t", oldCfg.Codex.DisableCodexCloaking, newCfg.Codex.DisableCodexCloaking))
 	}
+	if !reflect.DeepEqual(oldCfg.Codex.SingleDevice, newCfg.Codex.SingleDevice) {
+		changes = append(changes, "codex.single-device: updated")
+	}
 	if oldCfg.CodexHeaderDefaults.UserAgent != newCfg.CodexHeaderDefaults.UserAgent {
 		changes = append(changes, fmt.Sprintf("codex-header-defaults.user-agent: %q -> %q", oldCfg.CodexHeaderDefaults.UserAgent, newCfg.CodexHeaderDefaults.UserAgent))
 	}

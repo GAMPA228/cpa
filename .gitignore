@@ -13,6 +13,7 @@ config.yaml
 **/config.yaml
 .env
 **/.env
+**/.codex-identity-key
 
 # Generated content
 bin/*

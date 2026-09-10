@@ -148,6 +148,9 @@ type AntigravityConfig struct {
 // CodexConfig configures provider-wide Codex request behavior.
 type CodexConfig struct {
 	IdentityConfuse bool `yaml:"identity-confuse" json:"identity-confuse"`
+
+	// SingleDevice overrides legacy identity-confuse when explicitly configured.
+	SingleDevice *bool `yaml:"single-device,omitempty" json:"single-device,omitempty"`
 	// DisableCodexCloaking disables forcing the current official Codex identity headers on HTTP/SSE and WebSocket requests.
 	DisableCodexCloaking bool `yaml:"disable-codex-cloaking" json:"disable-codex-cloaking"`
 	// StreamBootstrapBuffering holds back initial handshake events (response.created,
