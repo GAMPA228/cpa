@@ -22,12 +22,14 @@ const AutoServiceTier = "auto"
 type Record struct {
 	Provider string
 	// ExecutorType stores the concrete executor type that handled the request.
-	ExecutorType string
-	Model        string
-	Alias        string
-	APIKey       string
-	AuthID       string
-	AuthIndex    string
+	ExecutorType    string
+	Model           string
+	Alias           string
+	APIKey          string
+	SessionID       string
+	ParentSessionID string
+	AuthID          string
+	AuthIndex       string
 	// ProxyMode is proxy, direct, or unknown for the effective configured route.
 	ProxyMode string
 	// ProxySource is auth, global, or none.
