@@ -78,6 +78,7 @@ type modelStats struct {
 type RequestDetail struct {
 	Timestamp       time.Time  `json:"timestamp"`
 	LatencyMs       int64      `json:"latency_ms"`
+	FirstTokenMs    *int64     `json:"first_token_ms"`
 	ClientIP        string     `json:"client_ip,omitempty"`
 	Source          string     `json:"source"`
 	AuthID          string     `json:"auth_id,omitempty"`
@@ -149,6 +150,7 @@ type UsageDetailRow struct {
 	Model           string     `json:"model"`
 	Timestamp       time.Time  `json:"timestamp"`
 	LatencyMs       int64      `json:"latency_ms"`
+	FirstTokenMs    *int64     `json:"first_token_ms"`
 	ClientIP        string     `json:"client_ip"`
 	Source          string     `json:"source"`
 	AuthID          string     `json:"auth_id,omitempty"`
@@ -368,6 +370,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	requestDetail := RequestDetail{
 		Timestamp:       timestamp,
 		LatencyMs:       normalizeLatency(record.Latency),
+		FirstTokenMs:    firstTokenMilliseconds(record.TTFT),
 		ClientIP:        s.resolveClientIP(ctx),
 		Source:          record.Source,
 		AuthID:          record.AuthID,
@@ -789,6 +792,14 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 }
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
+	if detail.FirstTokenMs != nil {
+		value := *detail.FirstTokenMs
+		if value < 0 {
+			detail.FirstTokenMs = nil
+		} else {
+			detail.FirstTokenMs = &value
+		}
+	}
 	detail.ClientIP = strings.TrimSpace(detail.ClientIP)
 	detail.AuthID = strings.TrimSpace(detail.AuthID)
 	detail.ProxyMode = strings.TrimSpace(detail.ProxyMode)
@@ -807,6 +818,14 @@ func normalizeRequestDetail(detail RequestDetail) RequestDetail {
 		detail.Timestamp = time.Now()
 	}
 	return detail
+}
+
+func firstTokenMilliseconds(ttft time.Duration) *int64 {
+	if ttft <= 0 {
+		return nil
+	}
+	ms := ttft.Milliseconds()
+	return &ms
 }
 
 func normalizedRequestServiceTier(record coreusage.Record) string {

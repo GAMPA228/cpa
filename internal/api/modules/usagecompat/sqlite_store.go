@@ -73,6 +73,7 @@ func (s *sqliteDetailStore) init() error {
 			model_name TEXT NOT NULL,
 			timestamp_ns INTEGER NOT NULL,
 			latency_ms INTEGER NOT NULL,
+			first_token_ms INTEGER,
 			client_ip TEXT NOT NULL DEFAULT '',
 			source TEXT NOT NULL,
 			auth_id TEXT NOT NULL DEFAULT '',
@@ -94,6 +95,7 @@ func (s *sqliteDetailStore) init() error {
 			dedup_key TEXT NOT NULL UNIQUE
 		)`,
 		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN first_token_ms INTEGER`,
 		`ALTER TABLE usage_details ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN auth_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN proxy_mode TEXT NOT NULL DEFAULT ''`,
@@ -129,16 +131,17 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 	}
 	_, err := s.db.Exec(
 		`INSERT INTO usage_details (
-			api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_id, auth_index,
+			api_name, model_name, timestamp_ns, latency_ms, first_token_ms, client_ip, source, auth_id, auth_index,
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
 			failed, dedup_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
 		detail.LatencyMs,
+		detail.FirstTokenMs,
 		detail.ClientIP,
 		detail.Source,
 		detail.AuthID,
@@ -241,7 +244,7 @@ func (s *sqliteDetailStore) ForEach(fn func(apiName, modelName string, detail Re
 		return nil
 	}
 	rows, err := s.db.Query(
-		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_id, auth_index,
+		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, client_ip, source, auth_id, auth_index,
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
@@ -405,7 +408,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 	if newestFirst {
 		order = "ORDER BY timestamp_ns DESC, id DESC"
 	}
-	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, client_ip, source, auth_id, auth_index,
+	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, client_ip, source, auth_id, auth_index,
 		proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 		service_tier, applied_service_tier, response_service_tier,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
@@ -526,6 +529,7 @@ func scanDetailRow(rows interface {
 		&row.Model,
 		&timestampNS,
 		&row.LatencyMs,
+		&row.FirstTokenMs,
 		&row.ClientIP,
 		&row.Source,
 		&row.AuthID,
@@ -566,6 +570,7 @@ func detailFromRow(row UsageDetailRow) RequestDetail {
 	return RequestDetail{
 		Timestamp:       row.Timestamp,
 		LatencyMs:       row.LatencyMs,
+		FirstTokenMs:    row.FirstTokenMs,
 		ClientIP:        row.ClientIP,
 		Source:          row.Source,
 		AuthID:          row.AuthID,
@@ -591,6 +596,7 @@ func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDeta
 		Model:           modelName,
 		Timestamp:       detail.Timestamp,
 		LatencyMs:       detail.LatencyMs,
+		FirstTokenMs:    detail.FirstTokenMs,
 		ClientIP:        detail.ClientIP,
 		Source:          detail.Source,
 		AuthID:          detail.AuthID,
