@@ -24,6 +24,8 @@ func TestCodexSingleDeviceTransportParity(t *testing.T) {
 	c.Request.Header.Set("User-Agent", "codex-tui/0.153.3")
 	c.Request.Header.Set("Session-Id", "session-a")
 	c.Request.Header.Set("X-Codex-Window-Id", "window-a")
+	c.Request.Header.Set(codexResponsesLiteHeader, "true")
+	c.Request.Header.Set("X-Codex-Turn-State", "opaque-turn-state")
 	c.Set("userApiKey", "user-a")
 	ctx := context.WithValue(context.Background(), "gin", c)
 	body := []byte(`{"model":"gpt-5.5","prompt_cache_key":"cache-a","service_tier":"priority","reasoning":{"effort":"high"},"input":[]}`)
@@ -45,10 +47,15 @@ func TestCodexSingleDeviceTransportParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wsHeaders = applyCodexWebsocketHeaders(ctx, wsHeaders, auth, "test-token", cfg, c.Request.Header)
+	wsHeaders = applyCodexWebsocketHeaders(ctx, wsHeaders, auth, "test-token", cfg, true, c.Request.Header)
 	applyModelHeaderOverrides(wsHeaders, req.Model, cfg)
 	applyCodexRoutingHintHeader(wsHeaders, auth, wsBody)
 	applyCodexIdentityConfuseHeaders(wsHeaders, &codexIdentityConfuseState{singleDevice: wsState})
+	for _, name := range []string{codexResponsesLiteHeader, "X-Codex-Turn-State"} {
+		if httpReq.Header.Get(name) != c.Request.Header.Get(name) || wsHeaders.Get(name) != c.Request.Header.Get(name) {
+			t.Fatalf("native request header changed: %s", name)
+		}
+	}
 	for _, name := range []string{"Session-Id", "X-Codex-Window-Id", "X-Codex-Installation-Id", "X-Codex-Routing-Hint"} {
 		if httpReq.Header.Get(name) == "" || httpReq.Header.Get(name) != wsHeaders.Get(name) {
 			t.Fatalf("transport mismatch for %s", name)
