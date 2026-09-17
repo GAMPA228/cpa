@@ -145,6 +145,13 @@ func (m *Manager) UpdatePreparedAuth(ctx context.Context, base, updated *Auth) (
 	return m.updateInternal(ctx, base, updated, updateModePrepare)
 }
 
+// UpdatePreparedAuthPersisted merges a partial metadata edit into the latest auth
+// and reports storage failures. On storage failure the runtime update may already
+// be visible; callers must not report a successful durable save.
+func (m *Manager) UpdatePreparedAuthPersisted(ctx context.Context, base, updated *Auth) (*Auth, error) {
+	return m.updateInternal(ctx, base, updated, updateModePrepare, true)
+}
+
 // UpdateRefreshedAuth atomically merges refresh results into the latest runtime auth
 // under the manager lock, preserving concurrent modifications (proxy_url, notes, weights, etc.).
 func (m *Manager) UpdateRefreshedAuth(ctx context.Context, base, updated *Auth) (*Auth, error) {
@@ -156,7 +163,7 @@ func (m *Manager) Update(ctx context.Context, auth *Auth) (*Auth, error) {
 	return m.updateInternal(ctx, nil, auth, updateModeReplace)
 }
 
-func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode updateAuthMode) (*Auth, error) {
+func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode updateAuthMode, requirePersistence ...bool) (*Auth, error) {
 	if auth == nil || auth.ID == "" {
 		return nil, nil
 	}
@@ -258,10 +265,13 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		m.scheduler.upsertAuth(authClone.Clone())
 	}
 	m.queueRefreshReschedule(auth.ID)
-	_ = m.persist(ctx, auth)
+	errPersist := m.persist(ctx, auth)
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
 	if cooldownStateChanged {
 		m.persistCooldownStates(context.Background())
+	}
+	if len(requirePersistence) > 0 && requirePersistence[0] && errPersist != nil {
+		return auth.Clone(), fmt.Errorf("persist auth metadata: %w", errPersist)
 	}
 	return auth.Clone(), nil
 }

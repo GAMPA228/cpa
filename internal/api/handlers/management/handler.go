@@ -43,6 +43,7 @@ type Handler struct {
 	configFilePath          string
 	mu                      sync.Mutex
 	authStatusMu            sync.Mutex
+	headerRulesMu           sync.Mutex
 	reloadMu                sync.Mutex
 	reloadGeneration        uint64
 	appliedReloadGeneration uint64

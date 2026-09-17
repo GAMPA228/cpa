@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
@@ -53,13 +54,24 @@ func TestCodexAccountHeadersRealRequests(t *testing.T) {
 			auth := &cliproxyauth.Auth{ID: "account-a", Provider: "codex", Attributes: map[string]string{"base_url": server.URL}, Metadata: map[string]any{"access_token": "test-token", "account_id": "account-a"}}
 			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse, Headers: http.Header{"X-Openai-Internal-Codex-Responses-Lite": {"true"}}, Metadata: map[string]any{cliproxyexecutor.ExecutionSessionMetadataKey: "account-headers-test"}}
 			req := cliproxyexecutor.Request{Model: "gpt-5.4", Payload: []byte(`{"model":"gpt-5.4","input":[]}`)}
-			for i, want := range []string{"account-agent-a", "account-agent-b", "global-agent"} {
-				if i < 2 {
+			for i, want := range []string{"account-agent-a", "account-agent-b", "global-agent", "global-agent"} {
+				if i > 0 {
+					req.Model = "gpt-5.5"
+					req.Payload = []byte(`{"model":"gpt-5.5","input":[]}`)
+				}
+				if i < 3 {
 					auth.Metadata[authheaders.MetadataKey] = []authheaders.Rule{
-						{Name: "User-Agent", Operation: "override", Value: want},
+						{Name: "User-Agent", Operation: "override", Value: "account-agent-a", Models: []string{"gpt-5.4"}},
+						{Name: "User-Agent", Operation: "override", Value: "account-agent-b", Models: []string{"gpt-5.5"}},
 						{Name: "Version", Operation: "default", Value: "ignored"},
 						{Name: "X-Account-Test", Operation: "default", Value: "added"},
 						{Name: "X-OpenAI-Internal-Codex-Responses-Lite", Operation: "delete"},
+					}
+					if i == 2 {
+						rules := auth.Metadata[authheaders.MetadataKey].([]authheaders.Rule)
+						expired := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+						rules[1].DurationMinutes = 10
+						rules[1].ExpiresAt = &expired
 					}
 				} else {
 					delete(auth.Metadata, authheaders.MetadataKey)
@@ -99,10 +111,10 @@ func TestCodexAccountHeadersRealRequests(t *testing.T) {
 				if got.Get("Authorization") != "Bearer test-token" || got.Get("Chatgpt-Account-Id") != "account-a" {
 					t.Fatal("credential headers changed")
 				}
-				if i < 2 && (got.Get("X-Account-Test") != "added" || got.Get("X-OpenAI-Internal-Codex-Responses-Lite") != "") {
+				if i < 3 && (got.Get("X-Account-Test") != "added" || got.Get("X-OpenAI-Internal-Codex-Responses-Lite") != "") {
 					t.Fatal("custom/default/delete rule not applied")
 				}
-				if i == 2 && got.Get("X-Account-Test") != "" {
+				if i == 3 && got.Get("X-Account-Test") != "" {
 					t.Fatal("removed rules still applied")
 				}
 			}

@@ -1,11 +1,9 @@
 package helps
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -23,17 +21,17 @@ func codexAccountHeaderRules(auth *cliproxyauth.Auth) []authheaders.Rule {
 }
 
 // ApplyCodexAccountHeaders must run after default, model and identity headers.
-func ApplyCodexAccountHeaders(headers http.Header, auth *cliproxyauth.Auth) {
-	authheaders.Apply(headers, codexAccountHeaderRules(auth))
+func ApplyCodexAccountHeaders(headers http.Header, auth *cliproxyauth.Auth, model ...string) string {
+	name := ""
+	if len(model) > 0 {
+		name = model[0]
+	}
+	rules := authheaders.Select(codexAccountHeaderRules(auth), name, time.Now())
+	authheaders.Apply(headers, rules)
+	return authheaders.Signature(rules)
 }
 
 // CodexAccountHeaderRulesKey invalidates reusable connections when account rules change.
 func CodexAccountHeaderRulesKey(auth *cliproxyauth.Auth) string {
-	rules := codexAccountHeaderRules(auth)
-	if len(rules) == 0 {
-		return ""
-	}
-	data, _ := json.Marshal(rules)
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return authheaders.Signature(authheaders.Select(codexAccountHeaderRules(auth), "", time.Now()))
 }

@@ -98,7 +98,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	applyModelHeaderOverrides(httpReq.Header, baseModel, e.cfg)
 	applyCodexRoutingHintHeader(httpReq.Header, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
-	helps.ApplyCodexAccountHeaders(httpReq.Header, auth)
+	helps.ApplyCodexAccountHeaders(httpReq.Header, auth, baseModel)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
 		authID = auth.ID
