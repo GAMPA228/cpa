@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
@@ -28,6 +29,7 @@ import (
 //   - *http.Client: An HTTP client with configured proxy or transport
 func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
 	httpClient := &http.Client{}
+	defer func() { diagnostics.WrapHTTP(ctx, httpClient) }()
 	if timeout > 0 {
 		httpClient.Timeout = timeout
 	}
@@ -66,7 +68,8 @@ var devinTransportCache = NewTransportCache[string](DefaultTransportCacheCapacit
 
 // NewDevinHTTPClient creates an HTTP client customized for Devin Connect-RPC upstream.
 // Suppresses automatic Accept-Encoding: gzip while preserving connection reuse across requests.
-func NewDevinHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
+func NewDevinHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) (client *http.Client) {
+	defer func() { diagnostics.WrapHTTP(ctx, client) }()
 	// Respect explicitly injected context RoundTripper (e.g. from Conductor, Home, or integration test fixtures)
 	if ctx != nil {
 		if rt, ok := ctx.Value("cliproxy.roundtripper").(http.RoundTripper); ok && rt != nil {

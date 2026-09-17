@@ -56,6 +56,7 @@ type codexWebsocketSession struct {
 	connMu                    sync.Mutex
 	conn                      *websocket.Conn
 	connCloser                *websocketConnectionCloser
+	captureHandshake          http.Header
 	wsURL                     string
 	authID                    string
 	multiAgentV2OptimizedConn *websocket.Conn
@@ -642,6 +643,11 @@ func (e *CodexWebsocketsExecutor) ensureUpstreamConn(ctx context.Context, auth *
 		return previous, previousCloser, nil, nil
 	}
 	sess.conn = conn
+	if resp != nil {
+		sess.captureHandshake = resp.Header.Clone()
+	} else {
+		sess.captureHandshake = nil
+	}
 	sess.connCloser = closer
 	sess.multiAgentV2OptimizedConn = nil
 	sess.wsURL = wsURL

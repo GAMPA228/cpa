@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	log "github.com/sirupsen/logrus"
@@ -63,6 +64,11 @@ func requestLogCaptureEnabled(cfg *config.Config) bool {
 
 // RecordAPIRequest stores the upstream request metadata in Gin context for request logging.
 func RecordAPIRequest(ctx context.Context, cfg *config.Config, info UpstreamRequestLog) {
+	diagnostics.Begin(ctx, diagnostics.Metadata{URL: info.URL, Method: info.Method, Provider: info.Provider, AuthID: info.AuthID}, info.Body, false)
+	recordAPIRequestLog(ctx, cfg, info)
+}
+
+func recordAPIRequestLog(ctx context.Context, cfg *config.Config, info UpstreamRequestLog) {
 	if cfg == nil || cfg.CommercialMode {
 		return
 	}
@@ -287,6 +293,7 @@ func AppendAPIResponseChunk(ctx context.Context, cfg *config.Config, chunk []byt
 
 // RecordAPIWebsocketRequest stores an upstream websocket request event in Gin context.
 func RecordAPIWebsocketRequest(ctx context.Context, cfg *config.Config, info UpstreamRequestLog) {
+	diagnostics.Begin(ctx, diagnostics.Metadata{URL: info.URL, Method: info.Method, Provider: info.Provider, AuthID: info.AuthID}, info.Body, true)
 	if !requestLogCaptureEnabled(cfg) {
 		return
 	}
@@ -319,6 +326,7 @@ func RecordAPIWebsocketRequest(ctx context.Context, cfg *config.Config, info Ups
 
 // RecordAPIWebsocketHandshake stores the upstream websocket handshake response metadata.
 func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status int, headers http.Header) {
+	diagnostics.Current(ctx).Headers(status, headers, false)
 	logging.SetResponseHeaders(ctx, headers)
 	if !requestLogCaptureEnabled(cfg) {
 		return
@@ -343,6 +351,11 @@ func RecordAPIWebsocketHandshake(ctx context.Context, cfg *config.Config, status
 
 // RecordAPIWebsocketUpgradeRejection stores a rejected websocket upgrade as an HTTP attempt.
 func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config, info UpstreamRequestLog, status int, headers http.Header, body []byte) {
+	if attempt := diagnostics.Current(ctx); attempt != nil {
+		attempt.Headers(status, headers, false)
+		attempt.Append(body)
+		attempt.Finish("upgrade_rejected", false)
+	}
 	logging.SetResponseHeaders(ctx, headers)
 	if !requestLogCaptureEnabled(cfg) {
 		return
@@ -352,7 +365,7 @@ func RecordAPIWebsocketUpgradeRejection(ctx context.Context, cfg *config.Config,
 		return
 	}
 
-	RecordAPIRequest(ctx, cfg, info)
+	recordAPIRequestLog(ctx, cfg, info)
 	RecordAPIResponseMetadata(ctx, cfg, status, headers)
 	AppendAPIResponseChunk(ctx, cfg, body)
 }
@@ -409,6 +422,9 @@ func AppendCodexAPIWebsocketResponse(ctx context.Context, cfg *config.Config, pa
 
 // RecordAPIWebsocketError stores an upstream websocket error event in Gin context.
 func RecordAPIWebsocketError(ctx context.Context, cfg *config.Config, stage string, err error) {
+	if err != nil {
+		diagnostics.Current(ctx).Finish("websocket_"+stage, true)
+	}
 	if !requestLogCaptureEnabled(cfg) || err == nil {
 		return
 	}

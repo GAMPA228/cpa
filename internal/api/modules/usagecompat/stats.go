@@ -76,6 +76,7 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp, latency, and token usage for a single request.
 type RequestDetail struct {
+	CaptureID       string     `json:"capture_id,omitempty"`
 	Timestamp       time.Time  `json:"timestamp"`
 	LatencyMs       int64      `json:"latency_ms"`
 	FirstTokenMs    *int64     `json:"first_token_ms"`
@@ -145,6 +146,7 @@ type MergeResult struct {
 
 // UsageDetailRow is a paginated request detail with its API and model identifiers.
 type UsageDetailRow struct {
+	CaptureID       string     `json:"capture_id,omitempty"`
 	ID              int64      `json:"id"`
 	API             string     `json:"api"`
 	Model           string     `json:"model"`
@@ -371,6 +373,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		Timestamp:       timestamp,
 		LatencyMs:       normalizeLatency(record.Latency),
 		FirstTokenMs:    firstTokenMilliseconds(record.TTFT),
+		CaptureID:       record.CaptureID,
 		ClientIP:        s.resolveClientIP(ctx),
 		Source:          record.Source,
 		AuthID:          record.AuthID,

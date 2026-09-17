@@ -12,12 +12,14 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/proxyutil"
 	log "github.com/sirupsen/logrus"
+	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"golang.org/x/net/proxy"
 )
@@ -148,6 +150,31 @@ func buildCodexWebsocketRequestBody(body []byte) []byte {
 }
 
 func readCodexWebsocketMessage(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, readCh chan codexWebsocketRead) (int, []byte, error) {
+	attempt := diagnostics.Current(ctx)
+	if attempt != nil && sess != nil {
+		sess.connMu.Lock()
+		headers := sess.captureHandshake.Clone()
+		sess.connMu.Unlock()
+		attempt.Headers(http.StatusSwitchingProtocols, headers, true)
+	}
+	kind, payload, err := readCodexWebsocketMessageUncaptured(ctx, sess, conn, readCh)
+	if attempt != nil {
+		if len(payload) > 0 {
+			attempt.Frame(payload)
+		}
+		if err != nil {
+			attempt.Finish("websocket_read_error", true)
+		} else {
+			switch gjson.GetBytes(payload, "type").String() {
+			case "response.completed", "response.done", "response.failed", "response.incomplete", "error":
+				attempt.Finish("", false)
+			}
+		}
+	}
+	return kind, payload, err
+}
+
+func readCodexWebsocketMessageUncaptured(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, readCh chan codexWebsocketRead) (int, []byte, error) {
 	if sess == nil {
 		if conn == nil {
 			return 0, nil, fmt.Errorf("codex websockets executor: websocket conn is nil")

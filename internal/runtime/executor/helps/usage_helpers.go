@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/clienterror"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -24,6 +25,7 @@ import (
 )
 
 type UsageReporter struct {
+	captureID           string
 	provider            string
 	baseURL             string
 	executorType        string
@@ -99,6 +101,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		}
 	}
 	reporter := &UsageReporter{
+		captureID:       diagnostics.ID(ctx),
 		provider:        provider,
 		baseURL:         baseURL,
 		model:           model,
@@ -119,6 +122,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 	reporter.proxySource = proxyRoute.source
 	reporter.proxyProtocol = proxyRoute.protocol
 	reporter.proxyEndpoint = proxyRoute.endpoint
+	diagnostics.SetProxy(ctx, strings.TrimSpace(proxyRoute.mode+" "+proxyRoute.source+" "+proxyRoute.protocol+" "+proxyRoute.endpoint))
 	if auth != nil {
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
@@ -477,6 +481,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	}
 	return usage.Record{
 		Provider:            r.provider,
+		CaptureID:           r.captureID,
 		BaseURL:             r.baseURL,
 		ExecutorType:        r.executorType,
 		Model:               model,

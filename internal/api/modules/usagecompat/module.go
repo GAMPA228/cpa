@@ -98,9 +98,14 @@ func (m *Module) OnConfigUpdated(cfg *config.Config) error {
 
 // RegisterRoutes attaches the compatibility routes to an existing route group.
 func (m *Module) RegisterRoutes(group gin.IRoutes) {
+	restoreCaptureStore()
 	group.GET("/usage", m.handler.GetUsageStatistics)
 	group.GET("/usage/aggregate", m.handler.GetUsageAggregate)
 	group.GET("/usage/details", m.handler.GetUsageDetails)
+	group.GET("/usage/capture", m.handler.GetCaptureStatus)
+	group.PUT("/usage/capture", m.handler.SetCaptureStatus)
+	group.GET("/usage/captures/:id", m.handler.GetCapture)
+	group.DELETE("/usage/captures/:id", m.handler.DeleteCapture)
 	group.GET("/usage/quota-estimator", m.handler.GetQuotaEstimatorOverview)
 	group.POST("/usage/quota-estimator", m.handler.PostQuotaEstimatorOverview)
 	group.GET("/usage/export", m.handler.ExportUsageStatistics)

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
@@ -231,6 +232,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	}
 	var shutdownErr error
 	s.shutdownOnce.Do(func() {
+		defer diagnostics.Default.Close()
 		if ctx == nil {
 			ctx = context.Background()
 		}

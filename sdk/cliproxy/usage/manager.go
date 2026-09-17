@@ -20,7 +20,8 @@ const AutoServiceTier = "auto"
 
 // Record contains the usage statistics captured for a single provider request.
 type Record struct {
-	Provider string
+	CaptureID string
+	Provider  string
 	// BaseURL stores the configured upstream base URL when available.
 	BaseURL string
 	// ExecutorType stores the concrete executor type that handled the request.
