@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	claudeauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/credentialweight"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
@@ -386,6 +387,10 @@ func (h *Handler) PatchAuthFileFields(c *gin.Context) {
 		changed = true
 	}
 	if changed {
+		if _, errRules := authheaders.Decode(targetAuth.Metadata[authheaders.MetadataKey]); errRules != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errRules.Error()})
+			return
+		}
 		syncAuthFileMetadataFields(targetAuth, touchedRoots)
 	}
 

@@ -99,6 +99,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	applyModelHeaderOverrides(wsHeaders, baseModel, e.cfg)
 	applyCodexRoutingHintHeader(wsHeaders, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(wsHeaders, &identityState)
+	helps.ApplyCodexAccountHeaders(wsHeaders, auth)
 
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -147,7 +148,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	var errDial error
 	dialCtx := ctx
 	if cliproxyexecutor.RequiredUpstreamWebsocket(ctx) {
-		conn, closer = existingWebsocketSessionConn(sess, authID, wsURL)
+		conn, closer = existingWebsocketSessionConn(sess, authID, wsURL, helps.CodexAccountHeaderRulesKey(auth))
 		if conn == nil {
 			return resp, cliproxyexecutor.NewUpstreamWebsocketReplayRequiredError()
 		}
