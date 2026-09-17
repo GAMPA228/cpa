@@ -56,12 +56,13 @@ type Capture struct {
 }
 
 type Status struct {
-	Enabled       bool      `json:"enabled"`
-	Until         time.Time `json:"until"`
-	Captured      int       `json:"captured"`
-	Dropped       int       `json:"dropped"`
-	Active        int       `json:"active"`
-	StorageErrors int       `json:"storage_errors"`
+	Enabled         bool      `json:"enabled"`
+	DurationSeconds int       `json:"duration_seconds"`
+	Until           time.Time `json:"until"`
+	Captured        int       `json:"captured"`
+	Dropped         int       `json:"dropped"`
+	Active          int       `json:"active"`
+	StorageErrors   int       `json:"storage_errors"`
 }
 
 type Manager struct {
@@ -69,6 +70,7 @@ type Manager struct {
 	closing       bool
 	mu            sync.Mutex
 	until         atomic.Int64
+	window        time.Duration
 	count         int
 	dropped       int
 	storageErrors int
@@ -82,7 +84,7 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
-	return &Manager{active: make(map[string]*Attempt), now: time.Now}
+	return &Manager{active: make(map[string]*Attempt), now: time.Now, window: Window}
 }
 
 type contextKey struct{}
@@ -323,7 +325,7 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	until := time.Unix(0, m.until.Load())
-	return Status{Enabled: m.now().Before(until), Until: until, Captured: m.count, Dropped: m.dropped, Active: len(m.active), StorageErrors: m.storageErrors}
+	return Status{Enabled: m.now().Before(until), DurationSeconds: int(m.window / time.Second), Until: until, Captured: m.count, Dropped: m.dropped, Active: len(m.active), StorageErrors: m.storageErrors}
 }
 
 func (m *Manager) Disable() { m.until.Store(0) }

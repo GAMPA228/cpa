@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -33,6 +34,59 @@ func captures(t *testing.T, m *Manager, id string) []Capture {
 		t.Fatal(err)
 	}
 	return items
+}
+
+func TestSelectableCaptureWindow(t *testing.T) {
+	for _, seconds := range []int{10, 20, 30} {
+		t.Run((time.Duration(seconds) * time.Second).String(), func(t *testing.T) {
+			m := NewManager()
+			var now atomic.Int64
+			now.Store(time.Now().UnixNano())
+			m.now = func() time.Time { return time.Unix(0, now.Load()) }
+			if err := m.Open(filepath.Join(t.TempDir(), "capture.sqlite3")); err != nil {
+				t.Fatal(err)
+			}
+			defer m.Close()
+			start := m.now()
+			if err := m.EnableFor(time.Duration(seconds) * time.Second); err != nil {
+				t.Fatal(err)
+			}
+			deadline := start.Add(time.Duration(seconds) * time.Second)
+			if !m.Status().Until.Equal(deadline) || m.Status().DurationSeconds != seconds {
+				t.Fatal("incorrect deadline")
+			}
+			now.Add(int64(time.Second))
+			if err := m.EnableFor(30 * time.Second); err != nil {
+				t.Fatal(err)
+			}
+			if !m.Status().Until.Equal(deadline) {
+				t.Fatal("active capture was extended")
+			}
+			for _, invalid := range []time.Duration{0, -time.Second, 15 * time.Second, 31 * time.Second} {
+				if m.EnableFor(invalid) == nil {
+					t.Fatal("invalid duration accepted")
+				}
+			}
+			now.Store(deadline.Add(-time.Nanosecond).UnixNano())
+			ctx := m.Context(context.Background())
+			if ID(ctx) == "" {
+				t.Fatal("window closed early")
+			}
+			a := Begin(ctx, Metadata{}, nil, false)
+			if a == nil {
+				t.Fatal("attempt rejected within window")
+			}
+			now.Store(deadline.UnixNano())
+			if m.Status().Enabled || ID(m.Context(context.Background())) != "" {
+				t.Fatal("window not closed at deadline")
+			}
+			a.Append([]byte("complete after deadline"))
+			a.Finish("", false)
+			if c := captures(t, m, ID(ctx))[0]; string(c.ResponseBody) != "complete after deadline" {
+				t.Fatal("existing attempt lost")
+			}
+		})
+	}
 }
 
 func TestWindowRetryIsolationAndShutdown(t *testing.T) {

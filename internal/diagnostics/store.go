@@ -63,6 +63,13 @@ func (m *Manager) Open(path string) error {
 }
 
 func (m *Manager) Enable() error {
+	return m.EnableFor(Window)
+}
+
+func (m *Manager) EnableFor(window time.Duration) error {
+	if window != 10*time.Second && window != 20*time.Second && window != 30*time.Second {
+		return errors.New("capture duration must be 10, 20 or 30 seconds")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.store == nil || m.closing {
@@ -73,7 +80,8 @@ func (m *Manager) Enable() error {
 	}
 	m.count = 0
 	m.dropped = 0
-	m.until.Store(m.now().Add(Window).UnixNano())
+	m.window = window
+	m.until.Store(m.now().Add(window).UnixNano())
 	return nil
 }
 

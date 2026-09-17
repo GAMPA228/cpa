@@ -2,12 +2,19 @@
 
 ## Operation
 
-In **Usage Statistics > Request Events**, enable **Capture upstream (10s)**.
-The server automatically closes the admission window after ten seconds, even
+In **Usage Statistics > Request Events**, choose 10, 20, or 30 seconds (default
+10), then enable **Capture upstream**. The server closes the admission window
+after the selected duration, even
 if the browser closes. Requests already admitted keep recording until EOF,
 a terminal WebSocket event, an error, or the five-minute capture limit.
 Turning the switch off stops admission, not the underlying requests.
 Usage statistics must be enabled; no YAML setting is required.
+
+The duration selector is locked during capture. Stop capture before changing
+the duration. The management PUT accepts optional `duration_seconds` (10, 20,
+or 30); omitting it preserves the previous 10-second default. Re-enabling an
+already active capture does not extend its deadline. Status returns the
+actual active duration and deadline; the selection is not persisted in YAML.
 
 Open the capture icon on a usage row to inspect individual account/retry
 attempts, request bodies, response headers, trailers, and response bodies.

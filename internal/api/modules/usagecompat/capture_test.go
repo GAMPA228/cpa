@@ -2,6 +2,7 @@ package usagecompat
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,6 +56,9 @@ func TestCaptureRoutesAndUsageAssociation(t *testing.T) {
 	if r := call("PUT", "/usage/capture", `{"enabled":true}`, true); r.Code != 200 || r.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("enable: %d %s", r.Code, r.Body.String())
 	}
+	if diagnostics.Default.Status().DurationSeconds != 10 {
+		t.Fatal("legacy default changed")
+	}
 	ctx := diagnostics.Default.Context(context.Background())
 	a := diagnostics.Begin(ctx, diagnostics.Metadata{URL: "https://example.com/responses"}, []byte("request"), false)
 	a.Headers(429, http.Header{"Retry-After": {"1"}}, false)
@@ -73,6 +77,28 @@ func TestCaptureRoutesAndUsageAssociation(t *testing.T) {
 	}
 	if r := call("GET", "/usage/captures/not-a-uuid", "", true); r.Code != 400 {
 		t.Fatal("invalid ID accepted")
+	}
+	for _, seconds := range []int{10, 20, 30} {
+		call("PUT", "/usage/capture", `{"enabled":false}`, true)
+		if r := call("PUT", "/usage/capture", fmt.Sprintf(`{"enabled":true,"duration_seconds":%d}`, seconds), true); r.Code != 200 {
+			t.Fatalf("duration %d: %s", seconds, r.Body.String())
+		}
+		status := diagnostics.Default.Status()
+		if status.DurationSeconds != seconds || !status.Enabled {
+			t.Fatalf("status: %+v", status)
+		}
+		if r := call("GET", "/usage/capture", "", true); !strings.Contains(r.Body.String(), fmt.Sprintf(`"duration_seconds":%d`, seconds)) {
+			t.Fatal("missing duration in status")
+		}
+	}
+	deadline := diagnostics.Default.Status().Until
+	for _, value := range []string{"0", "-1", "15", "31", "999999999999999999999", "1.5", `"20"`} {
+		if r := call("PUT", "/usage/capture", `{"enabled":true,"duration_seconds":`+value+`}`, true); r.Code != 400 {
+			t.Fatalf("invalid duration %s accepted", value)
+		}
+	}
+	if !diagnostics.Default.Status().Until.Equal(deadline) {
+		t.Fatal("invalid input changed active capture")
 	}
 	redisqueue.SetUsageStatisticsEnabled(false)
 	if r := call("PUT", "/usage/capture", `{"enabled":true}`, true); r.Code != 409 {

@@ -3,6 +3,7 @@ package usagecompat
 import (
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -40,18 +41,29 @@ func (h *Handler) SetCaptureStatus(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Enabled *bool `json:"enabled"`
+		Enabled         *bool `json:"enabled"`
+		DurationSeconds *int  `json:"duration_seconds"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil || input.Enabled == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "enabled must be a boolean"})
 		return
+	}
+	duration := diagnostics.Window
+	if input.DurationSeconds != nil {
+		switch *input.DurationSeconds {
+		case 10, 20, 30:
+			duration = time.Duration(*input.DurationSeconds) * time.Second
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "duration_seconds must be 10, 20 or 30"})
+			return
+		}
 	}
 	if *input.Enabled {
 		if !redisqueue.UsageStatisticsEnabled() {
 			c.JSON(http.StatusConflict, gin.H{"error": "Enable usage statistics before capturing"})
 			return
 		}
-		if err := diagnostics.Default.Enable(); err != nil {
+		if err := diagnostics.Default.EnableFor(duration); err != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Unable to start capture"})
 			return
 		}
