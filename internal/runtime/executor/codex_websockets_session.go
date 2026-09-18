@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
@@ -58,6 +59,7 @@ type codexWebsocketSession struct {
 	conn                      *websocket.Conn
 	connCloser                *websocketConnectionCloser
 	captureHandshake          http.Header
+	captureRequestHeaders     diagnostics.RequestHeaderSnapshot
 	wsURL                     string
 	authID                    string
 	headerRulesKey            string
@@ -625,6 +627,7 @@ func (e *CodexWebsocketsExecutor) ensureUpstreamConnWithRules(ctx context.Contex
 	readerConn := sess.readerConn
 	sess.connMu.Unlock()
 	if conn != nil {
+		sess.captureReusedHandshake(ctx, conn)
 		if readerConn != conn {
 			sess.connMu.Lock()
 			sess.readerConn = conn
@@ -655,8 +658,10 @@ func (e *CodexWebsocketsExecutor) ensureUpstreamConnWithRules(ctx context.Contex
 	sess.conn = conn
 	if resp != nil {
 		sess.captureHandshake = resp.Header.Clone()
+		sess.captureRequestHeaders = diagnostics.SnapshotRequestHeaders(resp.Request)
 	} else {
 		sess.captureHandshake = nil
+		sess.captureRequestHeaders = diagnostics.RequestHeaderSnapshot{}
 	}
 	sess.connCloser = closer
 	sess.multiAgentV2OptimizedConn = nil
@@ -670,6 +675,23 @@ func (e *CodexWebsocketsExecutor) ensureUpstreamConnWithRules(ctx context.Contex
 	go e.readUpstreamLoop(sess, conn)
 	logCodexWebsocketConnectedWithReused(sess, sess.sessionID, authID, wsURL, false)
 	return conn, closer, resp, nil
+}
+
+func (sess *codexWebsocketSession) captureReusedHandshake(ctx context.Context, conn *websocket.Conn) {
+	attempt := diagnostics.Current(ctx)
+	if attempt == nil || sess == nil {
+		return
+	}
+	sess.connMu.Lock()
+	if sess.conn != conn {
+		sess.connMu.Unlock()
+		return
+	}
+	responseHeaders := sess.captureHandshake
+	requestHeaders := sess.captureRequestHeaders
+	sess.connMu.Unlock()
+	attempt.RequestHeaders(requestHeaders)
+	attempt.Headers(http.StatusSwitchingProtocols, responseHeaders, true)
 }
 
 func (e *CodexWebsocketsExecutor) readUpstreamLoop(sess *codexWebsocketSession, conn *websocket.Conn) {

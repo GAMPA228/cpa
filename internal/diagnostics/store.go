@@ -140,6 +140,7 @@ func (m *Manager) cleanup() {
 }
 
 func cloneCapture(c Capture) Capture {
+	c.RequestHeaders = c.RequestHeaders.Clone()
 	c.RequestBody = append([]byte(nil), c.RequestBody...)
 	c.ResponseBody = append([]byte(nil), c.ResponseBody...)
 	c.ResponseHeaders = c.ResponseHeaders.Clone()

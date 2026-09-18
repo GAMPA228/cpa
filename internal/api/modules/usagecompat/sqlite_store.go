@@ -71,6 +71,7 @@ func (s *sqliteDetailStore) init() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			api_name TEXT NOT NULL,
 			model_name TEXT NOT NULL,
+			response_model TEXT NOT NULL DEFAULT '',
 			timestamp_ns INTEGER NOT NULL,
 			latency_ms INTEGER NOT NULL,
 			first_token_ms INTEGER,
@@ -96,6 +97,7 @@ func (s *sqliteDetailStore) init() error {
 			dedup_key TEXT NOT NULL UNIQUE
 		)`,
 		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN response_model TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN first_token_ms INTEGER`,
 		`ALTER TABLE usage_details ADD COLUMN capture_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`,
@@ -137,8 +139,8 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
-			failed, dedup_key
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			failed, dedup_key, response_model
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
@@ -164,6 +166,7 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 		tokens.TotalTokens,
 		failed,
 		dedupKey(apiName, modelName, detail),
+		detail.ResponseModel,
 	)
 	if err != nil {
 		if isSQLiteDuplicate(err) {
@@ -250,7 +253,7 @@ func (s *sqliteDetailStore) ForEach(fn func(apiName, modelName string, detail Re
 		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, capture_id, client_ip, source, auth_id, auth_index,
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
-			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model
 		FROM usage_details
 		ORDER BY timestamp_ns ASC, id ASC`,
 	)
@@ -414,7 +417,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, capture_id, client_ip, source, auth_id, auth_index,
 		proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 		service_tier, applied_service_tier, response_service_tier,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model
 		FROM usage_details ` + where + " " + order
 	if limit >= 0 {
 		sqlQuery += " LIMIT ? OFFSET ?"
@@ -462,9 +465,9 @@ func detailWhereClause(query DetailPageQuery) (string, []any) {
 		args = append(args, query.AuthIndex)
 	}
 	if query.Search != "" {
-		conditions = append(conditions, "(api_name LIKE ? ESCAPE '\\' OR model_name LIKE ? ESCAPE '\\' OR client_ip LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR auth_id LIKE ? ESCAPE '\\' OR auth_index LIKE ? ESCAPE '\\' OR proxy_mode LIKE ? ESCAPE '\\' OR proxy_source LIKE ? ESCAPE '\\' OR proxy_protocol LIKE ? ESCAPE '\\' OR proxy_endpoint LIKE ? ESCAPE '\\' OR service_tier LIKE ? ESCAPE '\\' OR applied_service_tier LIKE ? ESCAPE '\\' OR response_service_tier LIKE ? ESCAPE '\\')")
+		conditions = append(conditions, "(api_name LIKE ? ESCAPE '\\' OR model_name LIKE ? ESCAPE '\\' OR client_ip LIKE ? ESCAPE '\\' OR source LIKE ? ESCAPE '\\' OR auth_id LIKE ? ESCAPE '\\' OR auth_index LIKE ? ESCAPE '\\' OR proxy_mode LIKE ? ESCAPE '\\' OR proxy_source LIKE ? ESCAPE '\\' OR proxy_protocol LIKE ? ESCAPE '\\' OR proxy_endpoint LIKE ? ESCAPE '\\' OR service_tier LIKE ? ESCAPE '\\' OR applied_service_tier LIKE ? ESCAPE '\\' OR response_service_tier LIKE ? ESCAPE '\\' OR response_model LIKE ? ESCAPE '\\')")
 		searchArg := "%" + escapeSQLiteLike(query.Search) + "%"
-		args = append(args, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg)
+		args = append(args, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg, searchArg)
 	}
 	if len(conditions) == 0 {
 		return "", args
@@ -552,6 +555,7 @@ func scanDetailRow(rows interface {
 		&row.Tokens.CachedTokens,
 		&row.Tokens.TotalTokens,
 		&failed,
+		&row.ResponseModel,
 	)
 	if err != nil {
 		return row, err
@@ -572,6 +576,7 @@ func rowsToDetails(rows []UsageDetailRow) []RequestDetail {
 
 func detailFromRow(row UsageDetailRow) RequestDetail {
 	return RequestDetail{
+		ResponseModel:   row.ResponseModel,
 		Timestamp:       row.Timestamp,
 		LatencyMs:       row.LatencyMs,
 		FirstTokenMs:    row.FirstTokenMs,
@@ -596,6 +601,7 @@ func detailFromRow(row UsageDetailRow) RequestDetail {
 func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDetail) UsageDetailRow {
 	detail = normalizeRequestDetail(detail)
 	return UsageDetailRow{
+		ResponseModel:   detail.ResponseModel,
 		ID:              id,
 		API:             apiName,
 		Model:           modelName,
@@ -664,6 +670,7 @@ func detailRowMatchesQuery(row UsageDetailRow, query DetailPageQuery) bool {
 	search := strings.ToLower(query.Search)
 	return strings.Contains(strings.ToLower(row.API), search) ||
 		strings.Contains(strings.ToLower(row.Model), search) ||
+		strings.Contains(strings.ToLower(row.ResponseModel), search) ||
 		strings.Contains(strings.ToLower(row.ClientIP), search) ||
 		strings.Contains(strings.ToLower(row.Source), search) ||
 		strings.Contains(strings.ToLower(row.AuthID), search) ||

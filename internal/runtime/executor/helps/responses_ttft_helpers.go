@@ -106,11 +106,12 @@ func IsResponsesTokenEvent(payload []byte) bool {
 
 // ObserveResponsesTokenEvent inspects a Responses API frame payload and records TTFT if the frame
 // represents the first meaningful token event. It records the first packet arrival time as a fallback
-// and exits immediately with zero allocations once effective token TTFT is set.
+// and also observes the upstream model before client-facing response translation.
 func ObserveResponsesTokenEvent(reporter *UsageReporter, payload []byte) {
 	if reporter == nil || len(payload) == 0 {
 		return
 	}
+	reporter.ObserveResponseModel(payload)
 	if reporter.IsTTFTSet() {
 		return
 	}

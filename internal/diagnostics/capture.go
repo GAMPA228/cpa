@@ -44,6 +44,7 @@ type Capture struct {
 	FinishedAt            *time.Time  `json:"finished_at"`
 	Protocol              string      `json:"protocol"`
 	Status                int         `json:"status"`
+	RequestHeaders        http.Header `json:"request_headers"`
 	ResponseHeaders       http.Header `json:"response_headers"`
 	ResponseTrailers      http.Header `json:"response_trailers,omitempty"`
 	HandshakeReused       bool        `json:"handshake_reused"`
@@ -331,6 +332,7 @@ func (m *Manager) Status() Status {
 func (m *Manager) Disable() { m.until.Store(0) }
 
 func (a *Attempt) clearPayloadLocked() {
+	a.data.RequestHeaders = nil
 	a.data.RequestBody = nil
 	a.data.ResponseBody = nil
 	a.data.Frames = nil

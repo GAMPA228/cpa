@@ -42,6 +42,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !matches {
 		return t.base.RoundTrip(req)
 	}
+	a.RequestHeaders(SnapshotRequestHeaders(req))
 	// Tee the actual transmitted body, without consuming it ahead of the transport.
 	if req.Body != nil {
 		a.manager.mu.Lock()

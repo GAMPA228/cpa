@@ -17,6 +17,7 @@ import (
 	"github.com/gorilla/websocket"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/diagnostics"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -1095,6 +1096,9 @@ func (e *XAIWebsocketsExecutor) dialXAIWebsocket(ctx context.Context, auth *clip
 		ctx = context.Background()
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
+	if resp != nil {
+		diagnostics.Current(ctx).RequestHeaders(diagnostics.SnapshotRequestHeaders(resp.Request))
+	}
 	if err != nil {
 		cliproxyexecutor.MarkUpstreamAttempt(ctx)
 	}
@@ -1170,6 +1174,7 @@ func (e *XAIWebsocketsExecutor) ensureUpstreamConn(ctx context.Context, auth *cl
 			configureXAIWebsocketConn(sess, conn)
 			go e.readUpstreamLoop(sess, conn)
 		}
+		sess.captureReusedHandshake(ctx, conn)
 		logXAIWebsocketConnectedWithReused(sess, sess.sessionID, authID, wsURL, true)
 		return conn, closer, nil, nil
 	}
@@ -1191,6 +1196,13 @@ func (e *XAIWebsocketsExecutor) ensureUpstreamConn(ctx context.Context, auth *cl
 		return previous, previousCloser, nil, nil
 	}
 	sess.conn = conn
+	if resp != nil {
+		sess.captureHandshake = resp.Header.Clone()
+		sess.captureRequestHeaders = diagnostics.SnapshotRequestHeaders(resp.Request)
+	} else {
+		sess.captureHandshake = nil
+		sess.captureRequestHeaders = diagnostics.RequestHeaderSnapshot{}
+	}
 	sess.connCloser = closer
 	sess.wsURL = wsURL
 	sess.authID = authID
@@ -1247,6 +1259,7 @@ func shouldRetryXAIWebsocketSend(err error) bool {
 }
 
 func readXAIWebsocketMessage(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, readCh chan codexWebsocketRead) (int, []byte, error) {
+	sess.captureReusedHandshake(ctx, conn)
 	if ctx == nil {
 		ctx = context.Background()
 	}

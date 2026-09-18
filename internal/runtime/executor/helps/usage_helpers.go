@@ -30,6 +30,8 @@ type UsageReporter struct {
 	baseURL             string
 	executorType        string
 	model               string
+	responseModelMu     sync.RWMutex
+	responseModel       string
 	alias               string
 	authID              string
 	authIndex           string
@@ -479,6 +481,11 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 	if r == nil {
 		return usage.Record{Model: model, Detail: detail, Failed: failed, Fail: fail, Generate: usage.GenerateFlag(true)}
 	}
+	if detail.ResponseModel == "" {
+		r.responseModelMu.RLock()
+		detail.ResponseModel = r.responseModel
+		r.responseModelMu.RUnlock()
+	}
 	return usage.Record{
 		Provider:            r.provider,
 		CaptureID:           r.captureID,
@@ -502,6 +509,7 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		ServiceTier:         r.serviceTier,
 		AppliedServiceTier:  r.appliedTier,
 		ResponseServiceTier: strings.TrimSpace(detail.ResponseServiceTier),
+		ResponseModel:       strings.TrimSpace(detail.ResponseModel),
 		Generate:            usage.GenerateFlag(r.generate),
 		Stream:              r.stream,
 		RequestedAt:         r.requestedAt,
@@ -702,14 +710,24 @@ func (b *StreamUsageBuffer) Observe(detail usage.Detail, ok bool) {
 		return
 	}
 	responseServiceTier := strings.TrimSpace(detail.ResponseServiceTier)
-	if responseServiceTier == "" || hasNonZeroTokenUsage(detail) {
+	responseModel := strings.TrimSpace(detail.ResponseModel)
+	if (responseServiceTier == "" && responseModel == "") || hasNonZeroTokenUsage(detail) {
 		preservedTier := b.detail.ResponseServiceTier
+		preservedModel := b.detail.ResponseModel
 		b.detail = detail
+		if b.detail.ResponseModel == "" {
+			b.detail.ResponseModel = preservedModel
+		}
 		if b.detail.ResponseServiceTier == "" {
 			b.detail.ResponseServiceTier = preservedTier
 		}
 	} else {
-		b.detail.ResponseServiceTier = responseServiceTier
+		if responseServiceTier != "" {
+			b.detail.ResponseServiceTier = responseServiceTier
+		}
+		if responseModel != "" {
+			b.detail.ResponseModel = responseModel
+		}
 	}
 	b.ok = true
 }
@@ -728,7 +746,8 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 	hasUsageCandidate := bytes.Contains(payload, openAIStreamUsageMarker)
 	needTier := b.detail.ResponseServiceTier == "" || hasUsageCandidate
 	hasTierCandidate := needTier && bytes.Contains(payload, openAIStreamServiceTierMarker)
-	if !hasUsageCandidate && !hasTierCandidate {
+	hasModelCandidate := bytes.Contains(payload, []byte(`"model"`))
+	if !hasUsageCandidate && !hasTierCandidate && !hasModelCandidate {
 		return
 	}
 	if !gjson.ValidBytes(payload) {
@@ -747,7 +766,10 @@ func (b *StreamUsageBuffer) ObserveOpenAIStream(line []byte) {
 	if hasTierCandidate {
 		detail.ResponseServiceTier = extractResponseServiceTierFromValidJSON(payload)
 	}
-	b.Observe(detail, usageOK || detail.ResponseServiceTier != "")
+	if hasModelCandidate {
+		detail.ResponseModel = responseModelFromPayload(payload)
+	}
+	b.Observe(detail, usageOK || detail.ResponseServiceTier != "" || detail.ResponseModel != "")
 }
 
 // ObserveClaudeStream records and merges usage from a Claude SSE line.
@@ -788,15 +810,20 @@ func (b *StreamUsageBuffer) Detail() (usage.Detail, bool) {
 
 func ParseCodexUsage(data []byte) (usage.Detail, bool) {
 	responseServiceTier := extractResponseServiceTier(data)
+	responseModel := responseModelFromPayload(data)
 	usageNode := gjson.ParseBytes(data).Get("response.usage")
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
-		if responseServiceTier == "" {
+		usageNode = gjson.GetBytes(data, "usage")
+	}
+	if !hasOpenAIStyleUsageTokenFields(usageNode) {
+		if responseServiceTier == "" && responseModel == "" {
 			return usage.Detail{}, false
 		}
-		return usage.Detail{ResponseServiceTier: responseServiceTier}, true
+		return usage.Detail{ResponseServiceTier: responseServiceTier, ResponseModel: responseModel}, true
 	}
 	detail := parseOpenAIStyleUsageNode(usageNode)
 	detail.ResponseServiceTier = responseServiceTier
+	detail.ResponseModel = responseModel
 	return detail, true
 }
 
@@ -810,12 +837,14 @@ func ParseCodexImageToolUsage(data []byte) (usage.Detail, bool) {
 
 func ParseOpenAIUsage(data []byte) usage.Detail {
 	responseServiceTier := extractResponseServiceTier(data)
+	responseModel := responseModelFromPayload(data)
 	usageNode := gjson.ParseBytes(data).Get("usage")
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
-		return usage.Detail{ResponseServiceTier: responseServiceTier}
+		return usage.Detail{ResponseServiceTier: responseServiceTier, ResponseModel: responseModel}
 	}
 	detail := parseOpenAIStyleUsageNode(usageNode)
 	detail.ResponseServiceTier = responseServiceTier
+	detail.ResponseModel = responseModel
 	return detail
 }
 
@@ -925,15 +954,17 @@ func ParseOpenAIStreamUsage(line []byte) (usage.Detail, bool) {
 		return usage.Detail{}, false
 	}
 	responseServiceTier := extractResponseServiceTier(payload)
+	responseModel := responseModelFromPayload(payload)
 	usageNode := gjson.GetBytes(payload, "usage")
 	if !hasOpenAIStyleUsageTokenFields(usageNode) {
-		if responseServiceTier == "" {
+		if responseServiceTier == "" && responseModel == "" {
 			return usage.Detail{}, false
 		}
-		return usage.Detail{ResponseServiceTier: responseServiceTier}, true
+		return usage.Detail{ResponseServiceTier: responseServiceTier, ResponseModel: responseModel}, true
 	}
 	detail := parseOpenAIStyleUsageNode(usageNode)
 	detail.ResponseServiceTier = responseServiceTier
+	detail.ResponseModel = responseModel
 	return detail, true
 }
 

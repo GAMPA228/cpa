@@ -76,6 +76,7 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp, latency, and token usage for a single request.
 type RequestDetail struct {
+	ResponseModel   string     `json:"response_model,omitempty"`
 	CaptureID       string     `json:"capture_id,omitempty"`
 	Timestamp       time.Time  `json:"timestamp"`
 	LatencyMs       int64      `json:"latency_ms"`
@@ -146,6 +147,7 @@ type MergeResult struct {
 
 // UsageDetailRow is a paginated request detail with its API and model identifiers.
 type UsageDetailRow struct {
+	ResponseModel   string     `json:"response_model,omitempty"`
 	CaptureID       string     `json:"capture_id,omitempty"`
 	ID              int64      `json:"id"`
 	API             string     `json:"api"`
@@ -370,6 +372,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	hourKey := timestamp.Hour()
 
 	requestDetail := RequestDetail{
+		ResponseModel:   normalizedResponseModel(record),
 		Timestamp:       timestamp,
 		LatencyMs:       normalizeLatency(record.Latency),
 		FirstTokenMs:    firstTokenMilliseconds(record.TTFT),
@@ -591,6 +594,7 @@ func (s *RequestStatistics) MergeSnapshot(snapshot StatisticsSnapshot) MergeResu
 				modelName = "unknown"
 			}
 			for _, detail := range modelSnapshot.Details {
+				detail.ResponseModel = strings.TrimSpace(detail.ResponseModel)
 				detail.Tokens = normalizeTokenStats(detail.Tokens)
 				if detail.LatencyMs < 0 {
 					detail.LatencyMs = 0
@@ -795,6 +799,7 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 }
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
+	detail.ResponseModel = strings.TrimSpace(detail.ResponseModel)
 	if detail.FirstTokenMs != nil {
 		value := *detail.FirstTokenMs
 		if value < 0 {
@@ -837,6 +842,14 @@ func normalizedRequestServiceTier(record coreusage.Record) string {
 		tier = strings.TrimSpace(record.RequestServiceTier)
 	}
 	return tier
+}
+
+func normalizedResponseModel(record coreusage.Record) string {
+	model := strings.TrimSpace(record.ResponseModel)
+	if model == "" {
+		model = strings.TrimSpace(record.Detail.ResponseModel)
+	}
+	return model
 }
 
 func normalizedResponseServiceTier(record coreusage.Record) string {

@@ -38,6 +38,9 @@ func (e *CodexWebsocketsExecutor) dialCodexWebsocket(ctx context.Context, auth *
 		ctx = context.Background()
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
+	if resp != nil {
+		diagnostics.Current(ctx).RequestHeaders(diagnostics.SnapshotRequestHeaders(resp.Request))
+	}
 	if err != nil {
 		cliproxyexecutor.MarkUpstreamAttempt(ctx)
 	}
@@ -151,12 +154,7 @@ func buildCodexWebsocketRequestBody(body []byte) []byte {
 
 func readCodexWebsocketMessage(ctx context.Context, sess *codexWebsocketSession, conn *websocket.Conn, readCh chan codexWebsocketRead) (int, []byte, error) {
 	attempt := diagnostics.Current(ctx)
-	if attempt != nil && sess != nil {
-		sess.connMu.Lock()
-		headers := sess.captureHandshake.Clone()
-		sess.connMu.Unlock()
-		attempt.Headers(http.StatusSwitchingProtocols, headers, true)
-	}
+	sess.captureReusedHandshake(ctx, conn)
 	kind, payload, err := readCodexWebsocketMessageUncaptured(ctx, sess, conn, readCh)
 	if attempt != nil {
 		if len(payload) > 0 {

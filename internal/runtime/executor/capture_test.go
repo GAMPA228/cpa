@@ -53,7 +53,7 @@ func TestCaptureRawWebsocketFramesAndReusedHandshake(t *testing.T) {
 	}
 	ctx = m.Context(context.Background())
 	helps.RecordAPIWebsocketRequest(ctx, nil, helps.UpstreamRequestLog{URL: server.URL})
-	sess := &codexWebsocketSession{captureHandshake: response.Header.Clone()}
+	sess := &codexWebsocketSession{conn: conn, captureHandshake: response.Header.Clone(), captureRequestHeaders: diagnostics.SnapshotRequestHeaders(response.Request)}
 	ch := make(chan codexWebsocketRead, 1)
 	// The reader checks cancellation before waiting; handshake metadata is captured first.
 	cancelCtx, cancel := context.WithCancel(ctx)
