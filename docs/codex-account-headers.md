@@ -6,7 +6,7 @@ The existing `codex-header-defaults` configuration and unconfigured accounts ret
 their current behavior. This feature does not change model rewriting, reasoning,
 Fast policies, downstream API-key groups, or quota accounting.
 
-Rules are stored in each authentication JSON file, not in `config.yaml`:
+Manual rules are stored in each authentication JSON file, not in `config.yaml`:
 
 ```json
 {
@@ -65,8 +65,61 @@ preserved by the existing metadata merge path.
 Storage failure returns an error; runtime state may already reflect the edit, so
 refresh before retrying. The UI does not report durable success in this case.
 
+## Automatic Turn State Rules
+
+The request-event toolbar has a separate **Automatically maintain Turn State**
+switch and **Maximum characters** input. Save applies both settings. Defaults are
+disabled and 292 characters; integer thresholds from 1 through 8192 are accepted.
+This does not require diagnostic capture or an open browser page.
+
+Fresh Codex OAuth responses are observed using the selected account ID and actual
+upstream request model, after model rewriting and alias resolution. A nonempty
+`X-Codex-Turn-State` no longer than the threshold must also have a valid public
+Base64URL/Fernet structure and a plausible issue timestamp. This validates neither
+the signature nor the meaning of the encrypted state. A 60-minute deadline from
+the issue timestamp is a local policy, not an upstream lifetime guarantee.
+
+Each account/model has at most one automatic rule. During its final five minutes,
+a qualifying response with a strictly newer issue timestamp can replace it.
+There are no synthetic requests or guaranteed renewals: absent a fresh qualifying
+response, the old rule expires. Repeated old values cannot extend the deadline.
+Lowering the threshold immediately suppresses oversized automatic rules; turning
+the switch off suppresses all automatic rules while retaining their records.
+Manual rules remain independently managed. Automatic entries in Request Header
+Rules are marked with their source and are read-only; the protected header is not
+opened to arbitrary manual editing.
+
+Settings and automatic values are stored in `<usage SQLite path>.turn-state.sqlite3`,
+with owner-only file permissions where supported. Existing files are loaded at
+startup; per-request matching is memory-only. Rule changes use a bounded background
+queue and become active after successful persistence. Shutdown drains the queue
+within the service's shutdown context; cancellation skips remaining observations.
+At most 128 automatic models are retained per account; expired entries are reclaimed
+when a new model needs space.
+Back up this sensitive file with the other private runtime data; do not commit it.
+No `config.yaml` changes are required. Settings endpoints are administrator-only
+GET/PUT `/v0/management/usage/turn-state-auto-rules` (`enabled`, `max_chars`).
+
+Usage details expose nullable `turn_state_length`, including when automation and
+capture are off. The number measures the trimmed Base64 header characters, not
+decoded bytes or the injected request value. Missing, empty or ambiguous duplicate
+values and historical records show `-`. Fresh WebSocket handshake/metadata headers
+can supply the value; reused handshake snapshots cannot renew rules or supply a
+new request's length. Changed effective rules replace a reusable connection on
+its next use through the existing replay-required path.
+
+Deploy the backend and management HTML together. SQLite adds one nullable usage
+column automatically; older records are unchanged. Disabling automation restores
+normal header handling. Older binaries ignore the extra column and separate store.
+
 ## Verification
 
+- Automatic Turn State tests cover threshold validation, public envelope parsing,
+  account/model isolation, renewal boundaries, stale observations, concurrent updates,
+  restart recovery, write failures, authenticated settings routes, read-only rule
+  views, and nullable usage migrations/import/export. Mock HTTP and WebSocket
+  requests verify response observation, subsequent header injection, disabling,
+  connection replacement, and omission of reused-handshake lengths.
 - Targeted Go tests cover rule validation, account isolation, HTTP/WebSocket
   streaming and non-streaming requests, connection replacement, upload rejection,
   metadata reload, PATCH clearing, and existing header/single-device behavior.

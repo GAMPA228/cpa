@@ -99,7 +99,6 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	applyModelHeaderOverrides(wsHeaders, baseModel, e.cfg)
 	applyCodexRoutingHintHeader(wsHeaders, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(wsHeaders, &identityState)
-	headerRulesKey := helps.ApplyCodexAccountHeaders(wsHeaders, auth, baseModel)
 
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -128,6 +127,8 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		sess = newEphemeralCodexWebsocketSession()
 	}
 
+	// Resolve expiring rules after waiting for the preceding session request.
+	headerRulesKey := helps.ApplyCodexAccountHeaders(wsHeaders, auth, baseModel)
 	wsReqBody := buildCodexWebsocketRequestBody(upstreamBody)
 	wsReqLog := helps.UpstreamRequestLog{
 		URL:       wsURL,
@@ -157,6 +158,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		conn, closer, respHS, errDial = e.ensureUpstreamConnWithRules(dialCtx, auth, sess, authID, wsURL, wsHeaders, headerRulesKey)
 	}
 	if errDial != nil {
+		helps.ObserveCodexTurnState(reporter, auth, baseModel, respHS)
 		bodyErr := websocketHandshakeBody(respHS)
 		if respHS != nil {
 			helps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHS.StatusCode, respHS.Header.Clone(), bodyErr)
@@ -185,6 +187,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		return resp, errBind
 	}
 	recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
+	helps.ObserveCodexTurnState(reporter, auth, baseModel, respHS)
 	reporter.StartResponseTTFT()
 	if isEphemeralSession {
 		defer func() {
@@ -227,6 +230,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			// upstream closing the socket between sequential requests within the same
 			// execution session.
 			connRetry, closerRetry, respHSRetry, errDialRetry := e.ensureUpstreamConnWithRules(ctx, auth, sess, authID, wsURL, wsHeaders, headerRulesKey)
+			helps.ObserveCodexTurnState(reporter, auth, baseModel, respHSRetry)
 			if errDialRetry == nil && connRetry != nil {
 				previousConn, previousReadCh := conn, readCh
 				conn = connRetry
@@ -292,6 +296,9 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 			return resp, ctx.Err()
 		}
 		msgType, payload, errRead := readCodexWebsocketMessage(ctx, sess, conn, readCh)
+		if errRead == nil && msgType == websocket.TextMessage {
+			helps.ObserveCodexTurnStateEvent(reporter, auth, baseModel, payload)
+		}
 		if errRead != nil {
 			mappedErr := mapCodexWebsocketReadError(errRead)
 			helps.RecordAPIWebsocketError(ctx, e.cfg, "read", mappedErr)

@@ -72,6 +72,7 @@ func (s *sqliteDetailStore) init() error {
 			api_name TEXT NOT NULL,
 			model_name TEXT NOT NULL,
 			response_model TEXT NOT NULL DEFAULT '',
+			turn_state_length INTEGER,
 			timestamp_ns INTEGER NOT NULL,
 			latency_ms INTEGER NOT NULL,
 			first_token_ms INTEGER,
@@ -98,6 +99,7 @@ func (s *sqliteDetailStore) init() error {
 		)`,
 		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN response_model TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN turn_state_length INTEGER`,
 		`ALTER TABLE usage_details ADD COLUMN first_token_ms INTEGER`,
 		`ALTER TABLE usage_details ADD COLUMN capture_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN client_ip TEXT NOT NULL DEFAULT ''`,
@@ -139,8 +141,8 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
-			failed, dedup_key, response_model
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			failed, dedup_key, response_model, turn_state_length
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
@@ -167,6 +169,7 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 		failed,
 		dedupKey(apiName, modelName, detail),
 		detail.ResponseModel,
+		detail.TurnStateLength,
 	)
 	if err != nil {
 		if isSQLiteDuplicate(err) {
@@ -253,7 +256,7 @@ func (s *sqliteDetailStore) ForEach(fn func(apiName, modelName string, detail Re
 		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, capture_id, client_ip, source, auth_id, auth_index,
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
-			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model, turn_state_length
 		FROM usage_details
 		ORDER BY timestamp_ns ASC, id ASC`,
 	)
@@ -417,7 +420,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, capture_id, client_ip, source, auth_id, auth_index,
 		proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 		service_tier, applied_service_tier, response_service_tier,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model, turn_state_length
 		FROM usage_details ` + where + " " + order
 	if limit >= 0 {
 		sqlQuery += " LIMIT ? OFFSET ?"
@@ -556,6 +559,7 @@ func scanDetailRow(rows interface {
 		&row.Tokens.TotalTokens,
 		&failed,
 		&row.ResponseModel,
+		&row.TurnStateLength,
 	)
 	if err != nil {
 		return row, err
@@ -576,6 +580,7 @@ func rowsToDetails(rows []UsageDetailRow) []RequestDetail {
 
 func detailFromRow(row UsageDetailRow) RequestDetail {
 	return RequestDetail{
+		TurnStateLength: normalizedTurnStateLength(row.TurnStateLength),
 		ResponseModel:   row.ResponseModel,
 		Timestamp:       row.Timestamp,
 		LatencyMs:       row.LatencyMs,
@@ -601,6 +606,7 @@ func detailFromRow(row UsageDetailRow) RequestDetail {
 func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDetail) UsageDetailRow {
 	detail = normalizeRequestDetail(detail)
 	return UsageDetailRow{
+		TurnStateLength: detail.TurnStateLength,
 		ResponseModel:   detail.ResponseModel,
 		ID:              id,
 		API:             apiName,

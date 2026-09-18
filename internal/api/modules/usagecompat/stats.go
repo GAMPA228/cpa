@@ -76,6 +76,7 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp, latency, and token usage for a single request.
 type RequestDetail struct {
+	TurnStateLength *int       `json:"turn_state_length"`
 	ResponseModel   string     `json:"response_model,omitempty"`
 	CaptureID       string     `json:"capture_id,omitempty"`
 	Timestamp       time.Time  `json:"timestamp"`
@@ -147,6 +148,7 @@ type MergeResult struct {
 
 // UsageDetailRow is a paginated request detail with its API and model identifiers.
 type UsageDetailRow struct {
+	TurnStateLength *int       `json:"turn_state_length"`
 	ResponseModel   string     `json:"response_model,omitempty"`
 	CaptureID       string     `json:"capture_id,omitempty"`
 	ID              int64      `json:"id"`
@@ -372,6 +374,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	hourKey := timestamp.Hour()
 
 	requestDetail := RequestDetail{
+		TurnStateLength: normalizedTurnStateLength(record.TurnStateLength),
 		ResponseModel:   normalizedResponseModel(record),
 		Timestamp:       timestamp,
 		LatencyMs:       normalizeLatency(record.Latency),
@@ -595,6 +598,7 @@ func (s *RequestStatistics) MergeSnapshot(snapshot StatisticsSnapshot) MergeResu
 			}
 			for _, detail := range modelSnapshot.Details {
 				detail.ResponseModel = strings.TrimSpace(detail.ResponseModel)
+				detail.TurnStateLength = normalizedTurnStateLength(detail.TurnStateLength)
 				detail.Tokens = normalizeTokenStats(detail.Tokens)
 				if detail.LatencyMs < 0 {
 					detail.LatencyMs = 0
@@ -799,6 +803,7 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 }
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
+	detail.TurnStateLength = normalizedTurnStateLength(detail.TurnStateLength)
 	detail.ResponseModel = strings.TrimSpace(detail.ResponseModel)
 	if detail.FirstTokenMs != nil {
 		value := *detail.FirstTokenMs
@@ -834,6 +839,14 @@ func firstTokenMilliseconds(ttft time.Duration) *int64 {
 	}
 	ms := ttft.Milliseconds()
 	return &ms
+}
+
+func normalizedTurnStateLength(length *int) *int {
+	if length == nil || *length < 0 {
+		return nil
+	}
+	value := *length
+	return &value
 }
 
 func normalizedRequestServiceTier(record coreusage.Record) string {

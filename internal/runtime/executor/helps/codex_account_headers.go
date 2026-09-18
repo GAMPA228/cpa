@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
@@ -27,6 +28,20 @@ func ApplyCodexAccountHeaders(headers http.Header, auth *cliproxyauth.Auth, mode
 		name = model[0]
 	}
 	rules := authheaders.Select(codexAccountHeaderRules(auth), name, time.Now())
+	if turnStateAccount(auth) {
+		if rule, ok := turnstate.Default.Lookup(auth.ID, name); ok {
+			manual := false
+			for _, existing := range rules {
+				if strings.EqualFold(existing.Name, turnstate.Header) {
+					manual = true
+					break
+				}
+			}
+			if !manual {
+				rules = append(rules, authheaders.Rule{Name: turnstate.Header, Operation: "override", Value: rule.Value})
+			}
+		}
+	}
 	authheaders.Apply(headers, rules)
 	return authheaders.Signature(rules)
 }

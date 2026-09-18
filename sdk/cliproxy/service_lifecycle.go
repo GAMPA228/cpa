@@ -12,6 +12,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -233,6 +234,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 	var shutdownErr error
 	s.shutdownOnce.Do(func() {
 		defer diagnostics.Default.Close()
+		defer func() { turnstate.Default.CloseContext(ctx) }()
 		if ctx == nil {
 			ctx = context.Background()
 		}

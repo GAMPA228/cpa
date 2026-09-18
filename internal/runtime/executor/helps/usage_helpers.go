@@ -32,6 +32,8 @@ type UsageReporter struct {
 	model               string
 	responseModelMu     sync.RWMutex
 	responseModel       string
+	turnStateLengthMu   sync.RWMutex
+	turnStateLength     *int
 	alias               string
 	authID              string
 	authIndex           string
@@ -131,6 +133,20 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		reporter.accessTokenHash = authAccessTokenSHA256(auth)
 	}
 	return reporter
+}
+
+// SetTurnStateLength snapshots the upstream header length; nil or negative means unknown.
+func (r *UsageReporter) SetTurnStateLength(length *int) {
+	if r == nil {
+		return
+	}
+	r.turnStateLengthMu.Lock()
+	defer r.turnStateLengthMu.Unlock()
+	r.turnStateLength = nil
+	if length != nil && *length >= 0 {
+		value := *length
+		r.turnStateLength = &value
+	}
 }
 
 // SetStream records whether the request was executed in streaming mode.
@@ -486,7 +502,15 @@ func (r *UsageReporter) buildRecordForModel(model string, detail usage.Detail, f
 		detail.ResponseModel = r.responseModel
 		r.responseModelMu.RUnlock()
 	}
+	var turnStateLength *int
+	r.turnStateLengthMu.RLock()
+	if r.turnStateLength != nil {
+		value := *r.turnStateLength
+		turnStateLength = &value
+	}
+	r.turnStateLengthMu.RUnlock()
 	return usage.Record{
+		TurnStateLength:     turnStateLength,
 		Provider:            r.provider,
 		CaptureID:           r.captureID,
 		BaseURL:             r.baseURL,

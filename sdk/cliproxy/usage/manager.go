@@ -57,6 +57,8 @@ type Record struct {
 	ResponseServiceTier string
 	// ResponseModel is the model declared by the unmodified upstream response.
 	ResponseModel string
+	// TurnStateLength is the upstream response header length; nil means unknown.
+	TurnStateLength *int
 	// Generate reports whether the client requested actual generation.
 	// nil or true means generation is enabled; only an explicit false disables generation.
 	// Use GenerateFlag to set the value and GenerateEnabled to read it with the default.

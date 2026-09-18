@@ -125,7 +125,12 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		ResponseHeaders: record.ResponseHeaders,
 	}
 
+	turnStateLength := record.TurnStateLength
+	if turnStateLength != nil && *turnStateLength < 0 {
+		turnStateLength = nil
+	}
 	payload, err := json.Marshal(queuedUsageDetail{
+		TurnStateLength:     turnStateLength,
 		requestDetail:       detail,
 		AccountingVersion:   coreusage.TokenAccountingSchemaVersion,
 		TokenBreakdown:      usageDetail.TokenBreakdown,
@@ -152,6 +157,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 
 type queuedUsageDetail struct {
 	requestDetail
+	TurnStateLength     *int                     `json:"turn_state_length"`
 	AccountingVersion   int                      `json:"accounting_version"`
 	TokenBreakdown      coreusage.TokenBreakdown `json:"token_breakdown"`
 	Provider            string                   `json:"provider"`

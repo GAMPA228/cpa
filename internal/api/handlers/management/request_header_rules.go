@@ -15,6 +15,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
@@ -91,7 +92,7 @@ func (h *Handler) GetRequestHeaderRules(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
 	}
-	accounts := make([]headerRuleAccount, 0)
+	accounts := make([]headerRuleAccountView, 0)
 	for _, auth := range h.authManager.List() {
 		if !editableHeaderRuleAccount(auth) {
 			continue
@@ -101,7 +102,7 @@ func (h *Handler) GetRequestHeaderRules(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid account header rules", "auth_id": auth.ID})
 			return
 		}
-		accounts = append(accounts, account)
+		accounts = append(accounts, withAutomaticHeaderRules(account))
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Name < accounts[j].Name })
 	c.JSON(http.StatusOK, gin.H{"accounts": accounts, "server_time": time.Now().UTC()})
@@ -225,5 +226,39 @@ func (h *Handler) MutateRequestHeaderRules(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "cannot load saved rules"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"account": account, "server_time": time.Now().UTC()})
+	c.JSON(http.StatusOK, gin.H{"account": withAutomaticHeaderRules(account), "server_time": time.Now().UTC()})
+}
+
+type headerRuleAccountView struct {
+	headerRuleAccount
+	Rules []any `json:"rules"`
+}
+
+// Automatic entries are read-only views and never enter auth-file metadata.
+func withAutomaticHeaderRules(account headerRuleAccount) headerRuleAccountView {
+	view := headerRuleAccountView{headerRuleAccount: account, Rules: make([]any, 0, len(account.Rules))}
+	for _, rule := range account.Rules {
+		view.Rules = append(view.Rules, rule)
+	}
+	for _, rule := range turnstate.Default.Rules(account.AuthID) {
+		found := false
+		for _, model := range view.Models {
+			if model == rule.Model {
+				found = true
+				break
+			}
+		}
+		if !found {
+			view.Models = append(append([]string(nil), view.Models...), rule.Model)
+		}
+		_, active := turnstate.Default.Lookup(rule.AuthID, rule.Model)
+		view.Rules = append(view.Rules, struct {
+			authheaders.Rule
+			Source   string    `json:"source"`
+			Active   bool      `json:"active"`
+			IssuedAt time.Time `json:"issued_at"`
+		}{Rule: authheaders.Rule{ID: rule.ID(), Name: turnstate.Header, Operation: "override", Value: rule.Value, Models: []string{rule.Model}, DurationMinutes: 60, ExpiresAt: &rule.ExpiresAt}, Source: "turn-state-auto", Active: active, IssuedAt: rule.IssuedAt})
+	}
+	sort.Strings(view.Models)
+	return view
 }
