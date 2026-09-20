@@ -180,6 +180,9 @@ type DetailPageQuery struct {
 	Source    string
 	AuthIndex string
 	Search    string
+	Failed    *bool
+	StartTime time.Time
+	EndTime   time.Time
 	Page      int
 	PageSize  int
 	Offset    int

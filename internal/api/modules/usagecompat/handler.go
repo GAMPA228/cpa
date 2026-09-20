@@ -179,6 +179,10 @@ func (h *Handler) GetUsageDetails(c *gin.Context) {
 		PageSize:  parsePositiveInt(c.Query("page_size"), defaultDetailPageSize),
 		Offset:    parseNonNegativeInt(c.Query("offset"), -1),
 	}
+	if err := parseDetailFilters(c, &query); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, store.DetailsPage(query))
 }
 

@@ -113,6 +113,7 @@ func (s *sqliteDetailStore) init() error {
 		`ALTER TABLE usage_details ADD COLUMN response_service_tier TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS usage_details_api_model_time_idx ON usage_details(api_name, model_name, timestamp_ns DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS usage_details_time_idx ON usage_details(timestamp_ns DESC, id DESC)`,
+		`CREATE INDEX IF NOT EXISTS usage_details_failed_time_idx ON usage_details(failed, timestamp_ns DESC, id DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.Exec(statement); err != nil {
@@ -451,6 +452,18 @@ func detailWhereClause(query DetailPageQuery) (string, []any) {
 	query = normalizeDetailPageQuery(query)
 	conditions := make([]string, 0, 5)
 	args := make([]any, 0, 7)
+	if query.Failed != nil {
+		conditions = append(conditions, "failed = ?")
+		args = append(args, *query.Failed)
+	}
+	if !query.StartTime.IsZero() {
+		conditions = append(conditions, "timestamp_ns >= ?")
+		args = append(args, query.StartTime.UnixNano())
+	}
+	if !query.EndTime.IsZero() {
+		conditions = append(conditions, "timestamp_ns < ?")
+		args = append(args, query.EndTime.UnixNano())
+	}
 	if query.API != "" {
 		conditions = append(conditions, "api_name = ?")
 		args = append(args, query.API)
@@ -658,6 +671,15 @@ func normalizeDetailPageQuery(query DetailPageQuery) DetailPageQuery {
 
 func detailRowMatchesQuery(row UsageDetailRow, query DetailPageQuery) bool {
 	query = normalizeDetailPageQuery(query)
+	if query.Failed != nil && row.Failed != *query.Failed {
+		return false
+	}
+	if !query.StartTime.IsZero() && row.Timestamp.Before(query.StartTime) {
+		return false
+	}
+	if !query.EndTime.IsZero() && !row.Timestamp.Before(query.EndTime) {
+		return false
+	}
 	if query.API != "" && row.API != query.API {
 		return false
 	}
