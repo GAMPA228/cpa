@@ -128,7 +128,9 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 	}
 
 	// Resolve expiring rules after waiting for the preceding session request.
-	headerRulesKey := helps.ApplyCodexAccountHeaders(wsHeaders, auth, baseModel)
+	headerRulesKey, turnStateRefresh := helps.PrepareCodexAccountHeaders(wsHeaders, auth, baseModel)
+	refreshAttempted := false
+	defer func() { turnStateRefresh.Finish(refreshAttempted) }()
 	wsReqBody := buildCodexWebsocketRequestBody(upstreamBody)
 	wsReqLog := helps.UpstreamRequestLog{
 		URL:       wsURL,
@@ -155,6 +157,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 	} else {
 		dialCtx = cliproxyexecutor.WithUpstreamAttemptTracker(ctx)
+		refreshAttempted = true
 		conn, closer, respHS, errDial = e.ensureUpstreamConnWithRules(dialCtx, auth, sess, authID, wsURL, wsHeaders, headerRulesKey)
 	}
 	if errDial != nil {
@@ -165,6 +168,7 @@ func (e *CodexWebsocketsExecutor) Execute(ctx context.Context, auth *cliproxyaut
 		}
 		if respHS != nil && respHS.StatusCode == http.StatusUpgradeRequired {
 			if opts.ExecutionLifecycle == nil && !cliproxyexecutor.DownstreamWebsocket(ctx) {
+				turnStateRefresh.Finish(false)
 				return e.CodexExecutor.Execute(ctx, auth, req, opts)
 			}
 			if cliproxyexecutor.UpstreamAttempted(dialCtx) {

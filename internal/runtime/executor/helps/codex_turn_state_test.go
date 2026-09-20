@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
@@ -87,5 +88,56 @@ func TestCodexTurnStateObservationEligibilityAndMetadata(t *testing.T) {
 	ObserveCodexTurnState(r, auth, "model", response)
 	if length() != nil {
 		t.Fatal("ambiguous duplicate headers accepted")
+	}
+}
+
+func TestCodexTurnStateRefreshRemovesAllCasingsAndChangesConnectionKey(t *testing.T) {
+	old := turnstate.Default
+	m := turnstate.NewManager()
+	turnstate.Default = m
+	defer func() { m.Close(); turnstate.Default = old }()
+	path := filepath.Join(t.TempDir(), "state.sqlite3")
+	if err := m.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Configure(turnstate.Settings{Enabled: true, MaxChars: 292}); err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, 217)
+	data[0] = 0x80
+	binary.BigEndian.PutUint64(data[1:9], uint64(time.Now().Add(-56*time.Minute).Unix()))
+	token := base64.URLEncoding.EncodeToString(data)
+	m.Observe("a", "model", token)
+	m.Close()
+	if err := m.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	auth := &cliproxyauth.Auth{ID: "a", Provider: "codex", Metadata: map[string]any{
+		"access_token":          "test",
+		authheaders.MetadataKey: []authheaders.Rule{{Name: "User-Agent", Operation: "override", Value: "custom-agent"}},
+	}}
+	headers := http.Header{turnstate.Header: {"client-old"}, "x-codex-turn-state": {"second-old"}}
+	firstKey, first := PrepareCodexAccountHeaders(headers, auth, "model")
+	if first == nil || len(headers) != 1 || headers.Get("User-Agent") != "custom-agent" {
+		t.Fatal("refresh did not remove all state casings or changed unrelated account rules")
+	}
+	concurrentHeaders := http.Header{"x-codex-turn-state": {"client-old"}}
+	normalKey, concurrent := PrepareCodexAccountHeaders(concurrentHeaders, auth, "model")
+	if concurrent != nil || normalKey == firstKey || concurrentHeaders.Get(turnstate.Header) != token || len(concurrentHeaders) != 2 {
+		t.Fatal("concurrent request did not retain one canonical, valid automatic value")
+	}
+	first.Finish(false)
+	secondKey, second := PrepareCodexAccountHeaders(http.Header{}, auth, "model")
+	if second == nil || secondKey == firstKey || secondKey == normalKey {
+		t.Fatal("next refresh can reuse a stale headerless WebSocket handshake")
+	}
+	second.Finish(true)
+	if err := m.Configure(turnstate.Settings{Enabled: false, MaxChars: 292}); err != nil {
+		t.Fatal(err)
+	}
+	headers = http.Header{turnstate.Header: {"client-original"}}
+	_, disabled := PrepareCodexAccountHeaders(headers, auth, "model")
+	if disabled != nil || headers.Get(turnstate.Header) != "client-original" {
+		t.Fatal("disabled automation failed to restore normal client header handling")
 	}
 }

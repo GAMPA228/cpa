@@ -54,6 +54,8 @@ type Manager struct {
 	writeMu       sync.Mutex
 	settings      Settings
 	rules         map[key]Rule
+	refreshes     map[key]*Refresh
+	refreshSeq    uint64
 	generation    uint64
 	storageErrors uint64
 	dropped       uint64

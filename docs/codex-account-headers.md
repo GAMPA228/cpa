@@ -80,9 +80,17 @@ the signature nor the meaning of the encrypted state. A 60-minute deadline from
 the issue timestamp is a local policy, not an upstream lifetime guarantee.
 
 Each account/model has at most one automatic rule. During its final five minutes,
-a qualifying response with a strictly newer issue timestamp can replace it.
-There are no synthetic requests or guaranteed renewals: absent a fresh qualifying
-response, the old rule expires. Repeated old values cannot extend the deadline.
+one ordinary request is reserved to refresh it with `X-Codex-Turn-State` removed,
+including client-supplied copies of the header. Other concurrent requests retain
+the old rule while it is valid. The reservation lasts until the request finishes
+(including streaming WebSocket metadata); unsuccessful attempts have a 30-second
+cooldown before another ordinary request can refresh. A qualifying response with
+a strictly newer issue timestamp replaces the rule only after successful storage.
+There are no synthetic requests or guaranteed renewals: absent traffic or a fresh
+qualifying response, the old rule expires. Repeated old values cannot extend it.
+Expired or oversized managed values are not sent, and client headers are removed
+for those managed account/model pairs until a usable replacement is available.
+Pairs without a previously observed automatic rule retain normal header handling.
 Lowering the threshold immediately suppresses oversized automatic rules; turning
 the switch off suppresses all automatic rules while retaining their records.
 Manual rules remain independently managed. Automatic entries in Request Header
@@ -108,12 +116,24 @@ can supply the value; reused handshake snapshots cannot renew rules or supply a
 new request's length. Changed effective rules replace a reusable connection on
 its next use through the existing replay-required path.
 
+A refresh uses a distinct WebSocket connection key to force a new handshake even
+if an earlier headerless connection remains reusable. A continuation that requires
+its current connection follows the existing replay-required path; no incremental
+input is sent on a replacement socket without replay. This can require the client
+to replay the request. A preflight replay does not start the refresh cooldown.
+HTTP fallback releases the WebSocket reservation before trying the HTTP request.
+
 Deploy the backend and management HTML together. SQLite adds one nullable usage
 column automatically; older records are unchanged. Disabling automation restores
 normal header handling. Older binaries ignore the extra column and separate store.
+The proactive refresh fix is backend-only and requires no new configuration or
+database migration; existing switch and character-threshold settings are retained.
 
 ## Verification
 
+- Refresh tests cover the exact five-minute boundary, concurrent account/model
+  reservations, cooldown, expiry, threshold changes, durable replacement failures,
+  restart, header casing, and connection fingerprints using deterministic clocks.
 - Automatic Turn State tests cover threshold validation, public envelope parsing,
   account/model isolation, renewal boundaries, stale observations, concurrent updates,
   restart recovery, write failures, authenticated settings routes, read-only rule

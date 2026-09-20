@@ -88,6 +88,7 @@ func (m *Manager) Open(path string) error {
 	}
 	m.settings = settings
 	m.rules = rules
+	m.refreshes = make(map[key]*Refresh)
 	m.store = &store{db: db}
 	m.closing = false
 	m.queue = make(chan observation, 128)
@@ -182,6 +183,7 @@ func (m *Manager) persist(obs observation) {
 	}
 	if full {
 		delete(m.rules, key{reclaim.AuthID, reclaim.Model})
+		delete(m.refreshes, key{reclaim.AuthID, reclaim.Model})
 	}
 	m.rules[key{r.AuthID, r.Model}] = r
 }

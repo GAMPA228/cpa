@@ -1,6 +1,7 @@
 package helps
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -27,23 +28,46 @@ func ApplyCodexAccountHeaders(headers http.Header, auth *cliproxyauth.Auth, mode
 	if len(model) > 0 {
 		name = model[0]
 	}
-	rules := authheaders.Select(codexAccountHeaderRules(auth), name, time.Now())
+	key, _ := applyCodexAccountHeaders(headers, auth, name, false)
+	return key
+}
+
+// PrepareCodexAccountHeaders is used by model executions. The caller must finish
+// the returned reservation on every exit, or after the stream goroutine completes.
+func PrepareCodexAccountHeaders(headers http.Header, auth *cliproxyauth.Auth, model string) (string, *turnstate.Refresh) {
+	return applyCodexAccountHeaders(headers, auth, model, true)
+}
+
+func applyCodexAccountHeaders(headers http.Header, auth *cliproxyauth.Auth, model string, allowRefresh bool) (string, *turnstate.Refresh) {
+	rules := authheaders.Select(codexAccountHeaderRules(auth), model, time.Now())
+	var refresh *turnstate.Refresh
 	if turnStateAccount(auth) {
-		if rule, ok := turnstate.Default.Lookup(auth.ID, name); ok {
-			manual := false
-			for _, existing := range rules {
-				if strings.EqualFold(existing.Name, turnstate.Header) {
-					manual = true
-					break
+		value, omit := "", false
+		if allowRefresh {
+			value, omit, refresh = turnstate.Default.PrepareRequest(auth.ID, model)
+		} else if rule, ok := turnstate.Default.Lookup(auth.ID, model); ok {
+			value = rule.Value
+		}
+		if omit || value != "" {
+			// Remove every casing before mutation; raw WebSocket headers may not be canonical.
+			for name := range headers {
+				if strings.EqualFold(name, turnstate.Header) {
+					delete(headers, name)
 				}
 			}
-			if !manual {
-				rules = append(rules, authheaders.Rule{Name: turnstate.Header, Operation: "override", Value: rule.Value})
+			operation := "override"
+			if omit {
+				operation = "delete"
 			}
+			rules = append(rules, authheaders.Rule{Name: turnstate.Header, Operation: operation, Value: value})
 		}
 	}
 	authheaders.Apply(headers, rules)
-	return authheaders.Signature(rules)
+	key := authheaders.Signature(rules)
+	if refresh != nil {
+		key += fmt.Sprintf(":turn-state-refresh:%d", refresh.ID())
+	}
+	return key, refresh
 }
 
 // CodexAccountHeaderRulesKey invalidates reusable connections when account rules change.
