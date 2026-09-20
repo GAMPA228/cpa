@@ -132,6 +132,14 @@ func TestCodexTurnStateRefreshRemovesAllCasingsAndChangesConnectionKey(t *testin
 		t.Fatal("next refresh can reuse a stale headerless WebSocket handshake")
 	}
 	second.Finish(true)
+	if err := m.Configure(turnstate.Settings{Enabled: true, MaxChars: 292, AccountScope: "selected"}); err != nil {
+		t.Fatal(err)
+	}
+	headers = http.Header{turnstate.Header: {"client-original"}}
+	excludedKey, excluded := PrepareCodexAccountHeaders(headers, auth, "model")
+	if excluded != nil || headers.Get(turnstate.Header) != "client-original" || excludedKey == normalKey || headers.Get("User-Agent") != "custom-agent" {
+		t.Fatal("excluded account mutated client state, retained connection key, or lost manual rule")
+	}
 	if err := m.Configure(turnstate.Settings{Enabled: false, MaxChars: 292}); err != nil {
 		t.Fatal(err)
 	}

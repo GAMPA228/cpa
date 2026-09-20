@@ -254,10 +254,11 @@ func withAutomaticHeaderRules(account headerRuleAccount) headerRuleAccountView {
 		_, active := turnstate.Default.Lookup(rule.AuthID, rule.Model)
 		view.Rules = append(view.Rules, struct {
 			authheaders.Rule
-			Source   string    `json:"source"`
-			Active   bool      `json:"active"`
-			IssuedAt time.Time `json:"issued_at"`
-		}{Rule: authheaders.Rule{ID: rule.ID(), Name: turnstate.Header, Operation: "override", Value: rule.Value, Models: []string{rule.Model}, DurationMinutes: 60, ExpiresAt: &rule.ExpiresAt}, Source: "turn-state-auto", Active: active, IssuedAt: rule.IssuedAt})
+			Source         string    `json:"source"`
+			Active         bool      `json:"active"`
+			AccountEnabled bool      `json:"account_enabled"`
+			IssuedAt       time.Time `json:"issued_at"`
+		}{Rule: authheaders.Rule{ID: rule.ID(), Name: turnstate.Header, Operation: "override", Value: rule.Value, Models: []string{rule.Model}, DurationMinutes: 60, ExpiresAt: &rule.ExpiresAt}, Source: "turn-state-auto", Active: active, AccountEnabled: turnstate.Default.AccountEnabled(rule.AuthID), IssuedAt: rule.IssuedAt})
 	}
 	sort.Strings(view.Models)
 	return view

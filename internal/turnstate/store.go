@@ -3,6 +3,7 @@ package turnstate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -49,6 +50,8 @@ func (m *Manager) Open(path string) error {
 		"PRAGMA busy_timeout=3000", "PRAGMA journal_mode=DELETE", "PRAGMA secure_delete=ON",
 		"CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL, max_chars INTEGER NOT NULL)",
 		"INSERT OR IGNORE INTO settings VALUES(1,0,292)",
+		"CREATE TABLE IF NOT EXISTS account_scope(id INTEGER PRIMARY KEY CHECK(id=1), scope TEXT NOT NULL, auth_ids TEXT NOT NULL)",
+		"INSERT OR IGNORE INTO account_scope VALUES(1,'all','[]')",
 		"CREATE TABLE IF NOT EXISTS rules(auth_id TEXT NOT NULL, model TEXT NOT NULL, value TEXT NOT NULL, issued_at INTEGER NOT NULL, PRIMARY KEY(auth_id,model))",
 	} {
 		if _, err = db.Exec(query); err != nil {
@@ -59,8 +62,15 @@ func (m *Manager) Open(path string) error {
 	if err = db.QueryRow("SELECT enabled,max_chars FROM settings WHERE id=1").Scan(&settings.Enabled, &settings.MaxChars); err != nil {
 		return err
 	}
-	if settings.MaxChars < 1 || settings.MaxChars > MaxChars {
-		return errors.New("invalid turn state settings")
+	var idsJSON string
+	if err = db.QueryRow("SELECT scope,auth_ids FROM account_scope WHERE id=1").Scan(&settings.AccountScope, &idsJSON); err != nil {
+		return err
+	}
+	if err = json.Unmarshal([]byte(idsJSON), &settings.AuthIDs); err != nil {
+		return err
+	}
+	if settings, err = NormalizeSettings(settings); err != nil {
+		return err
 	}
 	rows, err := db.Query("SELECT auth_id,model,value,issued_at FROM rules")
 	if err != nil {
@@ -86,7 +96,7 @@ func (m *Manager) Open(path string) error {
 	if err != nil {
 		return err
 	}
-	m.settings = settings
+	m.setSettingsLocked(settings)
 	m.rules = rules
 	m.refreshes = make(map[key]*Refresh)
 	m.store = &store{db: db}
@@ -100,22 +110,62 @@ func (m *Manager) Open(path string) error {
 }
 
 func (m *Manager) Configure(settings Settings) error {
-	if settings.MaxChars < 1 || settings.MaxChars > MaxChars {
-		return errors.New("max_chars must be an integer between 1 and 8192")
+	settings, err := NormalizeSettings(settings)
+	if err != nil {
+		return err
 	}
 	m.writeMu.Lock()
 	defer m.writeMu.Unlock()
+	return m.configureLocked(settings)
+}
+
+// PatchSettings merges omitted scope fields while holding the persistence lock,
+// so a concurrent legacy client cannot restore a stale, broader account scope.
+func (m *Manager) PatchSettings(enabled bool, maxChars int, scope *string, ids *[]string) error {
+	m.writeMu.Lock()
+	defer m.writeMu.Unlock()
+	settings := m.Status().Settings
+	settings.Enabled, settings.MaxChars = enabled, maxChars
+	if scope != nil {
+		settings.AccountScope = *scope
+	}
+	if ids != nil {
+		settings.AuthIDs = *ids
+	}
+	settings, err := NormalizeSettings(settings)
+	if err != nil {
+		return err
+	}
+	return m.configureLocked(settings)
+}
+
+func (m *Manager) configureLocked(settings Settings) error {
 	m.mu.RLock()
 	s, closing := m.store, m.closing
 	m.mu.RUnlock()
 	if s == nil || closing {
 		return errors.New("turn state storage unavailable")
 	}
-	if _, err := s.db.Exec("UPDATE settings SET enabled=?,max_chars=? WHERE id=1", settings.Enabled, settings.MaxChars); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.Exec("UPDATE settings SET enabled=?,max_chars=? WHERE id=1", settings.Enabled, settings.MaxChars); err != nil {
+		return err
+	}
+	idsJSON, err := json.Marshal(settings.AuthIDs)
+	if err != nil {
+		return err
+	}
+	if _, err = tx.Exec("UPDATE account_scope SET scope=?,auth_ids=? WHERE id=1", settings.AccountScope, string(idsJSON)); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
 		return err
 	}
 	m.mu.Lock()
-	m.settings = settings
+	m.setSettingsLocked(settings)
 	m.generation++
 	m.mu.Unlock()
 	return nil

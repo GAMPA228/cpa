@@ -41,7 +41,7 @@ func (r *Refresh) Finish(attempted bool) {
 func (m *Manager) PrepareRequest(authID, model string) (value string, omit bool, refresh *Refresh) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.store == nil || m.closing || !m.settings.Enabled {
+	if m.store == nil || m.closing || !m.accountEnabledLocked(authID) {
 		return "", false, nil
 	}
 	k := key{authID, model}

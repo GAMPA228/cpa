@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func testToken(issued time.Time, blocks int) string {
 
 func TestNewManagerDefaults(t *testing.T) {
 	m := NewManager()
-	if got := m.Status(); got != (Status{Settings: Settings{MaxChars: 292}}) {
+	if got := m.Status(); !reflect.DeepEqual(got, Status{Settings: Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}}) {
 		t.Fatalf("default status = %+v", got)
 	}
 	m.Observe("account", "model", testToken(testEpoch, 1))

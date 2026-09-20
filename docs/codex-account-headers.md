@@ -72,6 +72,17 @@ switch and **Maximum characters** input. Save applies both settings. Defaults ar
 disabled and 292 characters; integer thresholds from 1 through 8192 are accepted.
 This does not require diagnostic capture or an open browser page.
 
+The account scope defaults to **All accounts** for existing installations.
+**Selected accounts** enables automation only for the selected upstream Codex
+OAuth account IDs, independently of downstream API keys. An empty selection enables
+no accounts. The searchable account selector shows account names and emails.
+Saving applies the scope immediately to observation, injection and renewal.
+Excluded accounts retain normal client-header handling and length statistics;
+their stored automatic rules remain visible but inactive. Re-enabling an account
+does not extend stored deadlines. Existing in-flight requests are not interrupted;
+reusable WebSocket connections with changed effective rules follow the existing
+replacement/replay path. Manual rules and other API-key policies are unchanged.
+
 Fresh Codex OAuth responses are observed using the selected account ID and actual
 upstream request model, after model rewriting and alias resolution. A nonempty
 `X-Codex-Turn-State` no longer than the threshold must also have a valid public
@@ -107,6 +118,12 @@ when a new model needs space.
 Back up this sensitive file with the other private runtime data; do not commit it.
 No `config.yaml` changes are required. Settings endpoints are administrator-only
 GET/PUT `/v0/management/usage/turn-state-auto-rules` (`enabled`, `max_chars`).
+The same endpoint accepts `account_scope` (`all` or `selected`) and `auth_ids`
+(an array of stable upstream account IDs). Legacy PUT requests omitting these
+fields preserve the current scope. Scope is persisted transactionally in an
+additive table in the same private Turn State database. Back up that database
+before deployment. Older binaries ignore scope and apply their global switch;
+disable automation before rolling back if account isolation must be retained.
 
 Usage details expose nullable `turn_state_length`, including when automation and
 capture are off. The number measures the trimmed Base64 header characters, not

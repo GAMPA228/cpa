@@ -41,10 +41,11 @@ func TestAutomaticTurnStateRuleView(t *testing.T) {
 	}
 	var decoded struct {
 		Rules []struct {
-			ID     string
-			Source string
-			Active bool
-			Models []string
+			ID             string
+			Source         string
+			Active         bool
+			AccountEnabled bool `json:"account_enabled"`
+			Models         []string
 		}
 		Revision string
 	}
@@ -56,6 +57,22 @@ func TestAutomaticTurnStateRuleView(t *testing.T) {
 	}
 	if decoded.Revision != account.Revision {
 		t.Fatal("automatic update invalidates unrelated manual revision")
+	}
+	if !decoded.Rules[1].AccountEnabled {
+		t.Fatal("active account marked disabled")
+	}
+	if err := m.Configure(turnstate.Settings{Enabled: true, MaxChars: 292, AccountScope: "selected"}); err != nil {
+		t.Fatal(err)
+	}
+	excluded, err := json.Marshal(withAutomaticHeaderRules(account))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal(excluded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Rules) != 2 || decoded.Rules[1].AccountEnabled || decoded.Rules[1].Active || decoded.Revision != account.Revision {
+		t.Fatal("excluded account state not exposed or manual revision changed")
 	}
 	for _, action := range []string{"delete", "save", "restart"} {
 		if _, err = mutateHeaderRules(manual, headerRuleMutation{ID: decoded.Rules[1].ID, Action: action}, time.Now()); err == nil {

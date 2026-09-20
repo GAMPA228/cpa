@@ -66,4 +66,36 @@ func TestTurnStateSettingsRoutesAndRestore(t *testing.T) {
 	if w := call("PUT", `{"enabled":false,"max_chars":292}`, true); w.Code != 200 || turnstate.Default.Status().Enabled {
 		t.Fatal("disable failed")
 	}
+	if w := call("PUT", `{"enabled":true,"max_chars":292,"account_scope":"selected","auth_ids":["a","b"]}`, true); w.Code != 200 {
+		t.Fatalf("select accounts: %s", w.Body.String())
+	}
+	if w := call("PUT", `{"enabled":true,"max_chars":312}`, true); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if status := turnstate.Default.Status(); status.AccountScope != "selected" || len(status.AuthIDs) != 2 || turnstate.Default.AccountEnabled("c") {
+		t.Fatal("legacy PUT widened selected scope")
+	}
+	for _, body := range []string{
+		`{"enabled":true,"max_chars":292,"account_scope":"invalid"}`,
+		`{"enabled":true,"max_chars":292,"account_scope":""}`,
+		`{"enabled":true,"max_chars":292,"auth_ids":[""]}`,
+		`{"enabled":true,"max_chars":292,"auth_ids":"a"}`,
+		`{"enabled":true,"max_chars":292} {}`,
+	} {
+		if w := call("PUT", body, true); w.Code != 400 {
+			t.Fatalf("invalid account scope accepted: %s", body)
+		}
+	}
+	if w := call("PUT", `{"enabled":true,"max_chars":292,"account_scope":"selected","auth_ids":[]}`, true); w.Code != 200 {
+		t.Fatal(w.Body.String())
+	}
+	if turnstate.Default.AccountEnabled("a") {
+		t.Fatal("empty selection enabled account")
+	}
+	turnstate.Default.Close()
+	turnstate.Default = turnstate.NewManager()
+	restoreTurnStateStore()
+	if status := turnstate.Default.Status(); status.AccountScope != "selected" || len(status.AuthIDs) != 0 || turnstate.Default.AccountEnabled("a") {
+		t.Fatal("empty selected scope not restored")
+	}
 }

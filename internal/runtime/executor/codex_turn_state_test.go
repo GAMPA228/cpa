@@ -146,6 +146,26 @@ func TestCodexTurnStateRealRequests(t *testing.T) {
 					t.Fatalf("handshake count %d, want 2", handshakes.Load())
 				}
 			}
+			if err := manager.Configure(turnstate.Settings{Enabled: true, MaxChars: 292, AccountScope: "selected", AuthIDs: []string{"other-account"}}); err != nil {
+				t.Fatal(err)
+			}
+			excluded := execute()
+			if excluded.TurnStateLength == nil || *excluded.TurnStateLength != 292 {
+				t.Fatal("account exclusion stopped length statistics")
+			}
+			if got := <-headers; got != "" {
+				t.Fatal("excluded account reused automatic request header")
+			}
+			if strings.HasPrefix(transport, "websocket") && handshakes.Load() != 3 {
+				t.Fatal("account exclusion did not replace old WebSocket handshake")
+			}
+			if err := manager.Configure(turnstate.Settings{Enabled: true, MaxChars: 292}); err != nil {
+				t.Fatal(err)
+			}
+			execute()
+			if got := <-headers; got != token {
+				t.Fatal("re-enrollment did not restore valid rule")
+			}
 			if err := manager.Configure(turnstate.Settings{Enabled: false, MaxChars: 292}); err != nil {
 				t.Fatal(err)
 			}

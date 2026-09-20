@@ -20,8 +20,10 @@ const RefreshBefore = 5 * time.Minute
 const MaxChars = 8192
 
 type Settings struct {
-	Enabled  bool `json:"enabled"`
-	MaxChars int  `json:"max_chars"`
+	Enabled      bool     `json:"enabled"`
+	MaxChars     int      `json:"max_chars"`
+	AccountScope string   `json:"account_scope"`
+	AuthIDs      []string `json:"auth_ids"`
 }
 
 type Status struct {
@@ -53,6 +55,7 @@ type Manager struct {
 	mu            sync.RWMutex
 	writeMu       sync.Mutex
 	settings      Settings
+	accounts      map[string]struct{}
 	rules         map[key]Rule
 	refreshes     map[key]*Refresh
 	refreshSeq    uint64
@@ -71,7 +74,7 @@ type Manager struct {
 var Default = NewManager()
 
 func NewManager() *Manager {
-	return &Manager{settings: Settings{MaxChars: 292}, rules: make(map[key]Rule), now: time.Now}
+	return &Manager{settings: Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}, rules: make(map[key]Rule), now: time.Now}
 }
 
 // Value rejects ambiguous multi-valued headers. Length is measured before decoding.
@@ -117,11 +120,13 @@ func Parse(value string, now time.Time) (time.Time, bool) {
 func (m *Manager) Status() Status {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return Status{Settings: m.settings, StorageErrors: m.storageErrors, Dropped: m.dropped}
+	settings := m.settings
+	settings.AuthIDs = append([]string{}, settings.AuthIDs...)
+	return Status{Settings: settings, StorageErrors: m.storageErrors, Dropped: m.dropped}
 }
 
 func (m *Manager) eligibleLocked(r Rule, now time.Time) bool {
-	if !m.settings.Enabled || len(r.Value) > m.settings.MaxChars || !now.Before(r.ExpiresAt) {
+	if !m.accountEnabledLocked(r.AuthID) || len(r.Value) > m.settings.MaxChars || !now.Before(r.ExpiresAt) {
 		return false
 	}
 	previous, exists := m.rules[key{r.AuthID, r.Model}]
@@ -140,7 +145,7 @@ func (m *Manager) Observe(authID, model, value string) {
 		return
 	}
 	m.mu.RLock()
-	enabled := m.store != nil && !m.closing && m.settings.Enabled && len(value) <= m.settings.MaxChars
+	enabled := m.store != nil && !m.closing && m.accountEnabledLocked(authID) && len(value) <= m.settings.MaxChars
 	m.mu.RUnlock()
 	if !enabled {
 		return
@@ -168,7 +173,7 @@ func (m *Manager) Lookup(authID, model string) (Rule, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	r, ok := m.rules[key{authID, model}]
-	return r, ok && m.settings.Enabled && len(r.Value) <= m.settings.MaxChars && m.now().Before(r.ExpiresAt)
+	return r, ok && m.accountEnabledLocked(authID) && len(r.Value) <= m.settings.MaxChars && m.now().Before(r.ExpiresAt)
 }
 
 func (m *Manager) Rules(authID string) []Rule {

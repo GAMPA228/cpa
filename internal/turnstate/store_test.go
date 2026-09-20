@@ -63,7 +63,7 @@ func requireRule(t *testing.T, m *Manager, want Rule) {
 
 func TestObserveDrainDeduplicatesAndScopesRules(t *testing.T) {
 	m, clock, path := newTestManager(t)
-	if got := m.Status(); got.Settings != (Settings{MaxChars: 292}) {
+	if got := m.Status(); !reflect.DeepEqual(got.Settings, Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("persisted defaults = %+v", got)
 	}
 	m.Observe("disabled", "model", testToken(testEpoch, 1))
@@ -181,7 +181,7 @@ func TestPersistenceRestartKeepsSettingsAndOriginalDeadlines(t *testing.T) {
 	m.Close()
 	clock.set(testEpoch.Add(40 * time.Minute))
 	m = openTestManager(t, path, clock)
-	if got := m.Status().Settings; got != (Settings{Enabled: true, MaxChars: 200}) {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{Enabled: true, MaxChars: 200, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("restarted settings = %+v", got)
 	}
 	requireRule(t, m, obs.rule)
@@ -189,7 +189,7 @@ func TestPersistenceRestartKeepsSettingsAndOriginalDeadlines(t *testing.T) {
 	m.Close()
 	clock.set(testEpoch.Add(time.Hour))
 	m = openTestManager(t, path, clock)
-	if got := m.Status().Settings; got != (Settings{MaxChars: 150}) {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{MaxChars: 150, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("disabled settings not persisted: %+v", got)
 	}
 	configureTestManager(t, m, true, 150)
@@ -227,13 +227,13 @@ func TestStorageFailureDoesNotActivateOrReplaceRule(t *testing.T) {
 	if err := m.Configure(Settings{MaxChars: 100}); err == nil {
 		t.Fatal("Configure succeeded despite storage failure")
 	}
-	if got := m.Status().Settings; got != before {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, before) {
 		t.Fatalf("failed Configure changed settings: %+v", got)
 	}
 	m.Close()
 	m = openTestManager(t, path, clock)
 	requireRule(t, m, initial.rule)
-	if len(m.Rules("b")) != 0 || m.Status().Settings != before {
+	if len(m.Rules("b")) != 0 || !reflect.DeepEqual(m.Status().Settings, before) {
 		t.Fatal("failed writes survived restart")
 	}
 }
@@ -245,7 +245,7 @@ func TestConfigureRejectsInvalidThresholds(t *testing.T) {
 			t.Fatalf("accepted max_chars=%d", max)
 		}
 	}
-	if got := m.Status().Settings; got != (Settings{MaxChars: 292}) {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("invalid settings activated: %+v", got)
 	}
 	for _, max := range []int{1, MaxChars} {
