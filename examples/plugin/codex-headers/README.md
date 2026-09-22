@@ -1,6 +1,6 @@
 # Codex Headers Plugin
 
-Standalone Linux Go c-shared plugin (schema 7). It handles account/model-scoped manual header rules, Turn State maintenance, and in-memory account-scoped HTTP cookies. Its three hooks run at the final Codex upstream transport boundary. The host and management UI must wire up these hooks separately; installing this plugin alone does not remove the native implementation.
+Standalone Linux Go c-shared plugin (schema 7). It exclusively handles account/model-scoped manual header rules, Turn State maintenance, and in-memory account-scoped HTTP cookies. Its three hooks run at the final Codex upstream transport boundary. There is no native fallback: disabling or failing to load the plugin stops these mutations, but does not disable proxy requests, capture, or response-header length statistics.
 
 ## Build and Install
 
@@ -31,7 +31,7 @@ plugins:
 
 ## Settings
 
-The plugin registers authenticated `GET` and `PUT /v0/management/plugins/codex-headers/turn-state`. GET returns the existing `enabled`, `max_chars`, `lifetime_seconds`, `account_scope`, `auth_ids`, `storage_errors`, and `dropped` shape. PUT requires `enabled` and `max_chars`; omitted lifetime and account scope fields retain their stored values. Account scope `selected` with `auth_ids` opts in individual OAuth accounts to automatic Turn State and cookies. Empty selections match no accounts; `all` opts in every Codex OAuth account. Use `enabled: false` to turn off automatic behavior without disabling manual header rules. The settings endpoint never returns header values or cookies.
+The plugin registers authenticated `GET` and `PUT /v0/management/plugins/codex-headers/turn-state`. GET returns the existing `enabled`, `max_chars`, `lifetime_seconds`, `account_scope`, `auth_ids`, `storage_errors`, and `dropped` shape. PUT requires `enabled` and `max_chars`; omitted lifetime and account scope fields retain their stored values. Account scope `selected` with `auth_ids` opts in individual OAuth accounts to automatic Turn State maintenance only. Empty selections match no accounts; `all` opts in every Codex OAuth account. Use `enabled: false` to turn off automatic maintenance without disabling manual rules or the plugin's account-isolated cookies. Disable the plugin itself to stop all three behaviors. The settings endpoint never returns header values or cookies.
 
 `GET /v0/management/plugins/codex-headers/rules` returns `{"rules":[...]}` with account-scoped persisted automatic rules (`auth_id`, `id`, `model`, `value`, `issued_at`, `expires_at`, `active`, `account_enabled`, `duration_minutes`). Rule values are sensitive and are returned only through the authenticated management API. This listing enumerates account IDs from SQLite; serving model requests does not read the database. Account-scoped OAuth cookies remain active independently of the Turn State automation switch, as in the native implementation.
 
@@ -41,6 +41,6 @@ The prepare response returns only changed/new headers and names of cleared heade
 ## Limits
 
 - Requires a Linux cgo build; legacy static `CGO_ENABLED=0` server binaries cannot load `.so` plugins. Build and test the actual shared library on Linux before deployment.
-- Go plugins cannot be unloaded from the running process. Disable/restart for a clean rollback; do not enable both native and plugin hook handlers simultaneously.
+- Disabling the plugin removes its hooks and quiesces its runtime state: cookies and refresh reservations are cleared. Persisted rules/settings remain, and re-enabling restores them without reviving old cookies. Requests already prepared before disable may finish with their existing headers.
 - Cookie Jar is scoped per OAuth auth ID and upstream HTTP(S)/WS(S) destination with public-suffix validation; WS(S) URLs are normalized to HTTP(S) for cookie matching. Secure cookies only travel on HTTPS/WSS. Cookies are not persisted.
-- This plugin owns no management UI or manual-rule storage. It never logs sensitive header or cookie contents.
+- Settings are opened from the plugin card in the management UI. Manual rules retain their existing auth metadata storage for compatibility and are read-only while the plugin is unavailable. The legacy Turn State settings endpoint returns HTTP 410 and never opens the plugin database. It never logs sensitive header or cookie contents.

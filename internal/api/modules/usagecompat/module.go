@@ -99,7 +99,6 @@ func (m *Module) OnConfigUpdated(cfg *config.Config) error {
 // RegisterRoutes attaches the compatibility routes to an existing route group.
 func (m *Module) RegisterRoutes(group gin.IRoutes) {
 	restoreCaptureStore()
-	restoreTurnStateStore()
 	group.GET("/usage/turn-state-auto-rules", m.handler.GetTurnStateSettings)
 	group.PUT("/usage/turn-state-auto-rules", m.handler.SetTurnStateSettings)
 	group.GET("/usage", m.handler.GetUsageStatistics)

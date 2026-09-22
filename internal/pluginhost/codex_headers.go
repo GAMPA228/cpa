@@ -31,6 +31,26 @@ func (h *Host) HasCodexHeaderPlugin() bool {
 	return capability != nil
 }
 
+// Disabling a stateful header plugin must release cookies and refresh reservations.
+// Other capabilities retain the host's existing lifecycle behavior.
+func (h *Host) quiesceRemovedHeaderPlugins(ctx context.Context, previous []capabilityRecord) {
+	active := make(map[string]bool)
+	for _, record := range h.activeRecords() {
+		active[record.id] = true
+	}
+	for _, record := range previous {
+		if record.plugin.Capabilities.CodexHeaderPlugin == nil || active[record.id] {
+			continue
+		}
+		h.mu.Lock()
+		loaded := h.loaded[record.id]
+		h.mu.Unlock()
+		if loaded != nil {
+			h.callQuiesce(context.WithoutCancel(ctx), loaded)
+		}
+	}
+}
+
 func (h *Host) PrepareCodexHeaders(ctx context.Context, req pluginapi.CodexHeaderRequest) (resp pluginapi.CodexHeaderResponse, err error) {
 	id, capability := h.codexHeaderPlugin()
 	if capability == nil {

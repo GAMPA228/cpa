@@ -1,18 +1,25 @@
 package management
 
 import (
+	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
+	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
-func TestAutomaticTurnStateRuleView(t *testing.T) {
+func TestRequestHeaderRulesExcludeNativeAutomaticRules(t *testing.T) {
 	old := turnstate.Default
 	m := turnstate.NewManager()
 	turnstate.Default = m
@@ -27,62 +34,77 @@ func TestAutomaticTurnStateRuleView(t *testing.T) {
 	data := make([]byte, 217)
 	data[0] = 0x80
 	binary.BigEndian.PutUint64(data[1:9], uint64(time.Now().Unix()))
-	m.Observe("account-a", "gpt-test", base64.URLEncoding.EncodeToString(data))
+	m.Observe("account-a", "native-only-model", base64.URLEncoding.EncodeToString(data))
 	m.Close()
 	if err := m.Open(path); err != nil {
 		t.Fatal(err)
 	}
+	if len(m.Rules("account-a")) != 1 {
+		t.Fatal("native rule fixture missing")
+	}
+
 	manual := []authheaders.Rule{{ID: "manual", Name: "Version", Operation: "override", Value: "1"}}
-	account := headerRuleAccount{AuthID: "account-a", Rules: manual, Revision: headerRulesRevision(manual)}
-	view := withAutomaticHeaderRules(account)
-	encoded, err := json.Marshal(view)
+	store := &failingHeaderStore{}
+	manager := coreauth.NewManager(store, nil, nil)
+	_, err := manager.Register(context.Background(), &coreauth.Auth{
+		ID: "account-a", FileName: "a.json", Provider: "codex",
+		Metadata: map[string]any{authheaders.MetadataKey: manual},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded struct {
-		Rules []struct {
-			ID             string
-			Source         string
-			Active         bool
-			AccountEnabled bool `json:"account_enabled"`
-			Models         []string
+	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: t.TempDir()}, manager)
+	h.SetPluginHost(activeManagementHeaderHost())
+	verify := func(w *httptest.ResponseRecorder, mutation bool) {
+		t.Helper()
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body.String())
 		}
-		Revision string
+		if bytes.Contains(w.Body.Bytes(), []byte("native-only-model")) || bytes.Contains(w.Body.Bytes(), []byte("turn-state-auto")) {
+			t.Fatalf("native automatic rule leaked: %s", w.Body.String())
+		}
+		var out struct {
+			Accounts []headerRuleAccount
+			Account  headerRuleAccount
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		account := out.Account
+		if !mutation {
+			if len(out.Accounts) != 1 {
+				t.Fatal("missing manual account")
+			}
+			account = out.Accounts[0]
+		}
+		if len(account.Rules) != 1 || account.Rules[0].ID != "manual" {
+			t.Fatal("manual rule missing")
+		}
 	}
-	if err = json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if len(decoded.Rules) != 2 || decoded.Rules[1].Source != "turn-state-auto" || !decoded.Rules[1].Active || decoded.Rules[1].Models[0] != "gpt-test" {
-		t.Fatalf("invalid automatic view: %s", encoded)
-	}
-	if decoded.Revision != account.Revision {
-		t.Fatal("automatic update invalidates unrelated manual revision")
-	}
-	if !decoded.Rules[1].AccountEnabled {
-		t.Fatal("active account marked disabled")
-	}
-	if err := m.Configure(turnstate.Settings{Enabled: true, MaxChars: 292, AccountScope: "selected"}); err != nil {
-		t.Fatal(err)
-	}
-	excluded, err := json.Marshal(withAutomaticHeaderRules(account))
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	h.GetRequestHeaderRules(c)
+	verify(w, false)
+	input := headerRuleMutation{AuthID: "account-a", Revision: headerRulesRevision(manual), Action: "save", ID: "manual", Rule: headerRuleDraft{Name: "Version", Operation: "override", Value: "2"}}
+	payload, err := json.Marshal(input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = json.Unmarshal(excluded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if len(decoded.Rules) != 2 || decoded.Rules[1].AccountEnabled || decoded.Rules[1].Active || decoded.Revision != account.Revision {
-		t.Fatal("excluded account state not exposed or manual revision changed")
+	w = httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(payload))
+	h.MutateRequestHeaderRules(c)
+	verify(w, true)
+	if len(m.Rules("account-a")) != 1 {
+		t.Fatal("native history removed")
 	}
 	for _, action := range []string{"delete", "save", "restart"} {
-		if _, err = mutateHeaderRules(manual, headerRuleMutation{ID: decoded.Rules[1].ID, Action: action}, time.Now()); err == nil {
+		if _, err := mutateHeaderRules(manual, headerRuleMutation{ID: m.Rules("account-a")[0].ID(), Action: action}, time.Now()); err == nil {
 			t.Fatal("automatic rule writable through manual mutation")
 		}
 	}
-	if len(withAutomaticHeaderRules(headerRuleAccount{AuthID: "account-b"}).Rules) != 0 {
-		t.Fatal("automatic rule leaked to another account")
-	}
-	if _, err = authheaders.Decode([]authheaders.Rule{{Name: turnstate.Header, Operation: "override", Value: "unsafe"}}); err == nil {
+	if _, err := authheaders.Decode([]authheaders.Rule{{Name: turnstate.Header, Operation: "override", Value: "unsafe"}}); err == nil {
 		t.Fatal("protected header became editable")
 	}
 }

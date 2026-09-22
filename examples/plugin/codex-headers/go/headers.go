@@ -26,6 +26,7 @@ import (
 
 type headerPlugin struct {
 	mu           sync.RWMutex
+	quiesced     bool
 	manager      *turnstate.Manager
 	path         string
 	jars         map[string]http.CookieJar
@@ -52,7 +53,7 @@ func registration() pluginRegistration {
 	result := pluginRegistration{
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
-			Name: "codex-headers", Version: "0.1.0", Author: "CLIProxyAPI",
+			Name: "codex-headers", Version: "0.2.0", Author: "CLIProxyAPI",
 			GitHubRepository: "https://github.com/GAMPA228/cpa",
 			ConfigFields: []pluginapi.ConfigField{{
 				Name: "data_path", Type: pluginapi.ConfigFieldTypeString,
@@ -72,6 +73,7 @@ func newHeaderPlugin() *headerPlugin {
 func (p *headerPlugin) close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.quiesced = true
 	for _, r := range p.reservations {
 		r.Finish(false)
 	}
@@ -110,6 +112,7 @@ func (p *headerPlugin) configure(raw []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if cfg.DataPath == p.path {
+		p.quiesced = false
 		return nil
 	}
 	var next *turnstate.Manager
@@ -127,6 +130,7 @@ func (p *headerPlugin) configure(raw []byte) error {
 		p.manager.Close()
 	}
 	p.manager, p.path = next, cfg.DataPath
+	p.quiesced = false
 	p.jars = make(map[string]http.CookieJar)
 	return nil
 }
@@ -156,6 +160,9 @@ func (p *headerPlugin) prepare(raw []byte) (pluginapi.CodexHeaderResponse, error
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	var refresh *turnstate.Refresh
+	if p.quiesced {
+		return pluginapi.CodexHeaderResponse{}, nil
+	}
 	if req.OAuth && p.manager != nil && req.AuthID != "" && p.manager.AccountEnabled(req.AuthID) {
 		value, omit, reservation := p.manager.PrepareRequest(req.AuthID, req.Model)
 		refresh = reservation
@@ -321,7 +328,7 @@ func (p *headerPlugin) observe(raw []byte) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if !req.OAuth || req.AuthID == "" {
+	if p.quiesced || !req.OAuth || req.AuthID == "" {
 		return nil
 	}
 	if p.manager != nil && p.manager.AccountEnabled(req.AuthID) {

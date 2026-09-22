@@ -67,7 +67,6 @@ func (e *CodexExecutor) PrepareRequest(req *http.Request, auth *cliproxyauth.Aut
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(req, attrs)
-	helps.ApplyCodexAccountHeaders(req.Header, auth)
 	return nil
 }
 

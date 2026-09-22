@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
@@ -79,6 +81,7 @@ func TestCodexTurnStateRealRequests(t *testing.T) {
 			auth := &cliproxyauth.Auth{ID: authID, Provider: "codex", Attributes: map[string]string{"base_url": server.URL}, Metadata: map[string]any{"access_token": "test-token"}}
 			req := cliproxyexecutor.Request{Model: "gpt-5.4", Payload: []byte(`{"model":"gpt-5.4","input":[]}`)}
 			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse, Metadata: map[string]any{cliproxyexecutor.ExecutionSessionMetadataKey: authID}}
+			opts.CodexHeaderHost = &turnStateTestHost{manager: manager}
 			execute := func() usage.Record {
 				t.Helper()
 				var err error
@@ -177,5 +180,139 @@ func TestCodexTurnStateRealRequests(t *testing.T) {
 				t.Fatal("disabled automation still injected header")
 			}
 		})
+	}
+}
+
+func TestCodexTurnStatePluginDisabledOrUnloadedRealRequests(t *testing.T) {
+	for _, mode := range []string{"disabled", "unloaded"} {
+		for _, transport := range []string{"http", "http-stream", "websocket", "websocket-stream"} {
+			for _, source := range []string{"headers", "metadata"} {
+				if source == "metadata" && strings.HasPrefix(transport, "http") {
+					continue
+				}
+				t.Run(mode+"/"+transport+"/"+source, func(t *testing.T) {
+					authID := t.Name()
+					manager, stale, drain := refreshTestManager(t, authID)
+					fresh := refreshTestToken(time.Now())
+					requests := make(chan http.Header, 4)
+					metadata := fmt.Sprintf(`{"type":"codex.response.metadata","headers":{"x-codex-turn-state":%q}}`, fresh)
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						requests <- r.Header.Clone()
+						responseHeaders := http.Header{"Set-Cookie": {"native_session=must-not-replay; Path=/"}}
+						if source == "headers" {
+							responseHeaders.Set(turnstate.Header, fresh)
+						}
+						if strings.HasPrefix(transport, "http") {
+							for name, values := range responseHeaders {
+								w.Header()[name] = values
+							}
+							w.Header().Set("Content-Type", "text/event-stream")
+							if source == "metadata" {
+								_, _ = fmt.Fprintf(w, "data: %s\n\n", metadata)
+							}
+							_, _ = fmt.Fprintf(w, "data: %s\n\n", refreshTestTerminal)
+							return
+						}
+						upgrader := websocket.Upgrader{}
+						conn, err := upgrader.Upgrade(w, r, responseHeaders)
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						defer func() { _ = conn.Close() }()
+						for {
+							if _, _, err := conn.ReadMessage(); err != nil {
+								return
+							}
+							if source == "metadata" {
+								if err := conn.WriteMessage(websocket.TextMessage, []byte(metadata)); err != nil {
+									return
+								}
+							}
+							if err := conn.WriteMessage(websocket.TextMessage, []byte(refreshTestTerminal)); err != nil {
+								return
+							}
+						}
+					}))
+					defer server.Close()
+					cfg := &config.Config{SDKConfig: config.SDKConfig{DisableImageGeneration: config.DisableImageGenerationAll}, CodexHeaderDefaults: config.CodexHeaderDefaults{UserAgent: "global-agent"}}
+					httpExec := NewCodexExecutor(cfg)
+					wsExec := NewCodexWebsocketsExecutor(cfg)
+					defer wsExec.CloseExecutionSession(authID)
+					auth, req, opts := refreshTestRequest(authID, server.URL, "")
+					auth.Metadata[authheaders.MetadataKey] = []authheaders.Rule{
+						{Name: "User-Agent", Operation: "override", Value: "native-agent"},
+						{Name: "Cookie", Operation: "override", Value: "native=forbidden"},
+					}
+					sink := &responseModelUsageSink{authID: authID, records: make(chan usage.Record, 4)}
+					usage.RegisterPlugin(sink)
+					host := &testCodexHeaderHost{response: pluginapi.CodexHeaderResponse{
+						Signature: "plugin-active", Headers: http.Header{"Cookie": {"plugin=only"}, turnstate.Header: {"plugin-state"}},
+					}}
+					opts.CodexHeaderHost = host
+					for attempt := 0; attempt < 3; attempt++ {
+						if attempt == 1 {
+							host = &testCodexHeaderHost{disabled: true}
+							opts.CodexHeaderHost = nil
+							if mode == "disabled" {
+								opts.CodexHeaderHost = host
+							}
+						}
+						if attempt == 2 {
+							// A fresh handshake also must not recover a native cookie jar.
+							wsExec.CloseExecutionSession(authID)
+						}
+						var result *cliproxyexecutor.StreamResult
+						var err error
+						switch transport {
+						case "http":
+							_, err = httpExec.Execute(context.Background(), auth, req, opts)
+						case "http-stream":
+							result, err = httpExec.ExecuteStream(context.Background(), auth, req, opts)
+						case "websocket":
+							_, err = wsExec.Execute(context.Background(), auth, req, opts)
+						case "websocket-stream":
+							result, err = wsExec.ExecuteStream(context.Background(), auth, req, opts)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						if result != nil {
+							refreshTestDrainStream(t, result)
+						}
+						select {
+						case got := <-requests:
+							if attempt == 0 {
+								if got.Get("Cookie") != "plugin=only" || got.Get(turnstate.Header) != "plugin-state" {
+									t.Fatalf("plugin headers not sent: %v", got)
+								}
+							} else if got.Get("Cookie") != "" || got.Get(turnstate.Header) != "" || got.Get("User-Agent") != "global-agent" {
+								t.Fatalf("absent plugin retained or applied native headers: %v", got)
+							}
+						default:
+							t.Fatal("disabled/unloaded signature reused the plugin WebSocket handshake")
+						}
+						select {
+						case record := <-sink.records:
+							if record.TurnStateLength == nil || *record.TurnStateLength != len(fresh) {
+								t.Fatalf("response length not recorded: %v", record.TurnStateLength)
+							}
+						case <-time.After(5 * time.Second):
+							t.Fatal("usage not published")
+						}
+					}
+					drain()
+					if rule, ok := manager.Lookup(authID, req.Model); !ok || rule.Value != stale {
+						t.Fatal("response observed into native turn-state storage")
+					}
+					if len(manager.Rules(authID)) != 1 {
+						t.Fatal("response created a native automatic rule")
+					}
+					if host.prepared.AuthID != "" || host.observed.AuthID != "" || host.completed.ReservationID != "" {
+						t.Fatal("disabled host invoked")
+					}
+				})
+			}
+		}
 	}
 }

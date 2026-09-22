@@ -20,23 +20,6 @@ type codexNoopRefresh struct{}
 
 func (codexNoopRefresh) Finish(bool) {}
 
-type codexHeaderHostContextKey struct{}
-
-func withCodexHeaderHost(ctx context.Context, host cliproxyexecutor.CodexHeaderHost) context.Context {
-	if host == nil {
-		return ctx
-	}
-	return context.WithValue(ctx, codexHeaderHostContextKey{}, host)
-}
-
-func codexHeaderPluginActive(ctx context.Context) bool {
-	if ctx == nil {
-		return false
-	}
-	host, _ := ctx.Value(codexHeaderHostContextKey{}).(cliproxyexecutor.CodexHeaderHost)
-	return host != nil && host.HasCodexHeaderPlugin()
-}
-
 type pluginHeaderRefresh struct {
 	ctx  context.Context
 	host cliproxyexecutor.CodexHeaderHost
@@ -58,8 +41,7 @@ func (r *pluginHeaderRefresh) Finish(attempted bool) {
 func prepareCodexUpstreamHeaders(ctx context.Context, opts cliproxyexecutor.Options, headers http.Header, auth *cliproxyauth.Auth, model, upstreamURL string) (string, codexHeaderRefresh, error) {
 	host := opts.CodexHeaderHost
 	if host == nil || !host.HasCodexHeaderPlugin() || auth == nil || !strings.EqualFold(auth.Provider, "codex") {
-		key, refresh := helps.PrepareCodexAccountHeaders(headers, auth, model)
-		return key, refresh, nil
+		return "", codexNoopRefresh{}, nil
 	}
 	rules, err := json.Marshal(auth.Metadata["request_header_rules"])
 	if err != nil {
@@ -116,13 +98,12 @@ func observeCodexUpstreamHeaders(ctx context.Context, opts cliproxyexecutor.Opti
 	if response == nil {
 		return
 	}
-	host := opts.CodexHeaderHost
-	if host == nil || !host.HasCodexHeaderPlugin() || auth == nil || !strings.EqualFold(auth.Provider, "codex") {
-		helps.ObserveCodexTurnState(reporter, auth, model, response)
-		return
-	}
 	_, length := turnstate.Value(response.Header)
 	reporter.SetTurnStateLength(length)
+	host := opts.CodexHeaderHost
+	if host == nil || !host.HasCodexHeaderPlugin() || auth == nil || !strings.EqualFold(auth.Provider, "codex") {
+		return
+	}
 	if err := host.ObserveCodexHeaders(ctx, pluginapi.CodexHeaderObservation{
 		AuthID: auth.ID, OAuth: auth.AuthKind() == cliproxyauth.AuthKindOAuth, Model: model, URL: upstreamURL, StatusCode: response.StatusCode, Headers: response.Header.Clone(),
 	}); err != nil {
@@ -131,10 +112,6 @@ func observeCodexUpstreamHeaders(ctx context.Context, opts cliproxyexecutor.Opti
 }
 
 func observeCodexTurnStateEvent(ctx context.Context, opts cliproxyexecutor.Options, reporter *helps.UsageReporter, auth *cliproxyauth.Auth, model, upstreamURL string, payload []byte) {
-	if opts.CodexHeaderHost == nil || !opts.CodexHeaderHost.HasCodexHeaderPlugin() {
-		helps.ObserveCodexTurnStateEvent(reporter, auth, model, payload)
-		return
-	}
 	headers := helps.CodexTurnStateEventHeaders(payload)
 	if len(headers) > 0 {
 		observeCodexUpstreamHeaders(ctx, opts, reporter, auth, model, upstreamURL, &http.Response{Header: headers, StatusCode: http.StatusOK})

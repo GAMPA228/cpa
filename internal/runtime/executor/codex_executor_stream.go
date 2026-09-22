@@ -122,9 +122,6 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 	})
 
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
-	if opts.CodexHeaderHost != nil && opts.CodexHeaderHost.HasCodexHeaderPlugin() {
-		httpClient.Jar = nil
-	}
 	httpClient = reporter.TrackHTTPClientRoundTripOnly(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {

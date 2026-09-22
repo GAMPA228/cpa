@@ -15,7 +15,6 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/thinking"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
@@ -92,7 +91,7 @@ func (h *Handler) GetRequestHeaderRules(c *gin.Context) {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
 	}
-	accounts := make([]headerRuleAccountView, 0)
+	accounts := make([]headerRuleAccount, 0)
 	for _, auth := range h.authManager.List() {
 		if !editableHeaderRuleAccount(auth) {
 			continue
@@ -102,10 +101,17 @@ func (h *Handler) GetRequestHeaderRules(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid account header rules", "auth_id": auth.ID})
 			return
 		}
-		accounts = append(accounts, withAutomaticHeaderRules(account))
+		accounts = append(accounts, account)
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].Name < accounts[j].Name })
-	c.JSON(http.StatusOK, gin.H{"accounts": accounts, "server_time": time.Now().UTC()})
+	c.JSON(http.StatusOK, gin.H{"accounts": accounts, "server_time": time.Now().UTC(), "read_only": !h.headerRulesWritable()})
+}
+
+func (h *Handler) headerRulesWritable() bool {
+	h.mu.Lock()
+	host := h.pluginHost
+	h.mu.Unlock()
+	return host.HasCodexHeaderPlugin()
 }
 
 // mutateHeaderRules changes exactly one rule. Existing absolute deadlines are
@@ -163,6 +169,10 @@ func mutateHeaderRules(rules []authheaders.Rule, input headerRuleMutation, now t
 }
 
 func (h *Handler) MutateRequestHeaderRules(c *gin.Context) {
+	if !h.headerRulesWritable() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Codex header rules are read-only while the header plugin is unavailable", "read_only": true})
+		return
+	}
 	if h.authManager == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "core auth manager unavailable"})
 		return
@@ -226,40 +236,5 @@ func (h *Handler) MutateRequestHeaderRules(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "cannot load saved rules"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"account": withAutomaticHeaderRules(account), "server_time": time.Now().UTC()})
-}
-
-type headerRuleAccountView struct {
-	headerRuleAccount
-	Rules []any `json:"rules"`
-}
-
-// Automatic entries are read-only views and never enter auth-file metadata.
-func withAutomaticHeaderRules(account headerRuleAccount) headerRuleAccountView {
-	view := headerRuleAccountView{headerRuleAccount: account, Rules: make([]any, 0, len(account.Rules))}
-	for _, rule := range account.Rules {
-		view.Rules = append(view.Rules, rule)
-	}
-	for _, rule := range turnstate.Default.Rules(account.AuthID) {
-		found := false
-		for _, model := range view.Models {
-			if model == rule.Model {
-				found = true
-				break
-			}
-		}
-		if !found {
-			view.Models = append(append([]string(nil), view.Models...), rule.Model)
-		}
-		_, active := turnstate.Default.Lookup(rule.AuthID, rule.Model)
-		view.Rules = append(view.Rules, struct {
-			authheaders.Rule
-			Source         string    `json:"source"`
-			Active         bool      `json:"active"`
-			AccountEnabled bool      `json:"account_enabled"`
-			IssuedAt       time.Time `json:"issued_at"`
-		}{Rule: authheaders.Rule{ID: rule.ID(), Name: turnstate.Header, Operation: "override", Value: rule.Value, Models: []string{rule.Model}, DurationMinutes: turnstate.Default.Status().LifetimeSeconds / 60, ExpiresAt: &rule.ExpiresAt}, Source: "turn-state-auto", Active: active, AccountEnabled: turnstate.Default.AccountEnabled(rule.AuthID), IssuedAt: rule.IssuedAt})
-	}
-	sort.Strings(view.Models)
-	return view
+	c.JSON(http.StatusOK, gin.H{"account": account, "server_time": time.Now().UTC()})
 }

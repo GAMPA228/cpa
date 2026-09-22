@@ -131,6 +131,44 @@ func TestLegacyDefaultWithoutEnv(t *testing.T) {
 	}
 }
 
+func TestQuiesceStopsHeadersAndClearsCookies(t *testing.T) {
+	p := pluginWithDB(t)
+	path := p.path
+	settings := turnstate.Settings{Enabled: true, MaxChars: 312, LifetimeSeconds: 240}
+	setSettings(t, p, settings)
+	req := pluginapi.CodexHeaderRequest{AuthID: "a", OAuth: true, Model: "m", URL: "https://example.com/responses"}
+	req.Rules = encode(t, []authheaders.Rule{{Name: "X-Test", Operation: "override", Value: "applied"}})
+	observation := pluginapi.CodexHeaderObservation{AuthID: "a", OAuth: true, Model: "m", URL: req.URL,
+		StatusCode: 200, Headers: http.Header{"Set-Cookie": {"sid=private; Secure; Path=/"}}}
+	if err := p.observe(encode(t, observation)); err != nil {
+		t.Fatal(err)
+	}
+	if result := prepare(t, p, req); result.Headers.Get("Cookie") == "" || result.Headers.Get("X-Test") != "applied" {
+		t.Fatal("enabled plugin did not apply headers")
+	}
+	if _, err := handleMethod(p, pluginabi.MethodPluginQuiesce, nil); err != nil {
+		t.Fatal(err)
+	}
+	if result := prepare(t, p, req); len(result.Headers) != 0 || len(result.ClearHeaders) != 0 || result.ReservationID != "" {
+		t.Fatal("quiesced plugin still modified headers")
+	}
+	if err := p.observe(encode(t, observation)); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.jars) != 0 || len(p.reservations) != 0 || p.manager != nil {
+		t.Fatal("quiesce retained runtime state")
+	}
+	if err := p.configure(encode(t, lifecycleRequest{ConfigYAML: []byte("data_path: " + filepath.ToSlash(path))})); err != nil {
+		t.Fatal(err)
+	}
+	if !p.manager.Status().Enabled || p.manager.Status().MaxChars != 312 {
+		t.Fatal("settings were not restored")
+	}
+	if result := prepare(t, p, req); result.Headers.Get("Cookie") != "" || result.Headers.Get("X-Test") != "applied" {
+		t.Fatal("re-enabled plugin reused old cookies or lost manual rules")
+	}
+}
+
 func TestRulePriorityExpiryDefaultDelete(t *testing.T) {
 	p := newHeaderPlugin()
 	now := time.Now()

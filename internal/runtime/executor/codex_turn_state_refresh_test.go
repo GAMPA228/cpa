@@ -19,10 +19,64 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
 const refreshTestTerminal = `{"type":"response.completed","response":{"id":"resp-refresh","object":"response","status":"completed","model":"other-model","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}`
+
+// The fake owns persistence and reservations; the executor only transports the
+// plugin's decisions and reports observations/completions across its boundary.
+type turnStateTestHost struct {
+	manager   *turnstate.Manager
+	mu        sync.Mutex
+	refreshes map[string]*turnstate.Refresh
+}
+
+func (h *turnStateTestHost) HasCodexHeaderPlugin() bool { return true }
+
+func (h *turnStateTestHost) PrepareCodexHeaders(_ context.Context, req pluginapi.CodexHeaderRequest) (pluginapi.CodexHeaderResponse, error) {
+	value, omit, refresh := h.manager.PrepareRequest(req.AuthID, req.Model)
+	response := pluginapi.CodexHeaderResponse{Signature: value}
+	if value != "" || omit {
+		response.ClearHeaders = []string{turnstate.Header}
+	}
+	if value != "" {
+		response.Headers = http.Header{turnstate.Header: {value}}
+	}
+	if refresh != nil {
+		response.ReservationID = fmt.Sprint(refresh.ID())
+		response.Signature = "refresh:" + response.ReservationID
+		h.mu.Lock()
+		if h.refreshes == nil {
+			h.refreshes = make(map[string]*turnstate.Refresh)
+		}
+		h.refreshes[response.ReservationID] = refresh
+		h.mu.Unlock()
+	}
+	return response, nil
+}
+
+func (h *turnStateTestHost) ObserveCodexHeaders(_ context.Context, req pluginapi.CodexHeaderObservation) error {
+	if req.OAuth && (req.StatusCode == http.StatusSwitchingProtocols || req.StatusCode >= 200 && req.StatusCode < 300) {
+		value, length := turnstate.Value(req.Headers)
+		if length != nil {
+			h.manager.Observe(req.AuthID, req.Model, value)
+		}
+	}
+	return nil
+}
+
+func (h *turnStateTestHost) CompleteCodexHeaders(_ context.Context, req pluginapi.CodexHeaderCompletion) error {
+	h.mu.Lock()
+	refresh := h.refreshes[req.ReservationID]
+	delete(h.refreshes, req.ReservationID)
+	h.mu.Unlock()
+	if refresh != nil {
+		refresh.Finish(req.Attempted)
+	}
+	return nil
+}
 
 func refreshTestToken(issued time.Time) string {
 	data := make([]byte, 217)
@@ -140,6 +194,7 @@ func TestCodexTurnStateRefreshTransports(t *testing.T) {
 			wsExec := NewCodexWebsocketsExecutor(cfg)
 			defer wsExec.CloseExecutionSession(authID)
 			auth, req, opts := refreshTestRequest(authID, server.URL, stale)
+			opts.CodexHeaderHost = &turnStateTestHost{manager: manager}
 			execute := func() {
 				t.Helper()
 				var err error
@@ -216,6 +271,7 @@ func TestCodexTurnStateRefreshWebsocketStreamReservation(t *testing.T) {
 			defer exec.CloseExecutionSession(authID)
 			defer exec.CloseExecutionSession(authID + "-second")
 			auth, req, opts := refreshTestRequest(authID, server.URL, stale)
+			opts.CodexHeaderHost = &turnStateTestHost{manager: manager}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			first, err := exec.ExecuteStream(ctx, auth, req, opts)
@@ -254,6 +310,7 @@ func TestCodexTurnStateRefreshReplayRequiredRelease(t *testing.T) {
 			exec := NewCodexWebsocketsExecutor(&config.Config{})
 			defer exec.CloseExecutionSession(authID)
 			auth, req, opts := refreshTestRequest(authID, server.URL, stale)
+			opts.CodexHeaderHost = &turnStateTestHost{manager: manager}
 			ctx := cliproxyexecutor.WithRequiredUpstreamWebsocket(context.Background())
 			var err error
 			if stream {

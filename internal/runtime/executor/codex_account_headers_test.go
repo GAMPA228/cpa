@@ -2,19 +2,19 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/authheaders"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
@@ -54,6 +54,8 @@ func TestCodexAccountHeadersRealRequests(t *testing.T) {
 			auth := &cliproxyauth.Auth{ID: "account-a", Provider: "codex", Attributes: map[string]string{"base_url": server.URL}, Metadata: map[string]any{"access_token": "test-token", "account_id": "account-a"}}
 			opts := cliproxyexecutor.Options{SourceFormat: sdktranslator.FormatOpenAIResponse, Headers: http.Header{"X-Openai-Internal-Codex-Responses-Lite": {"true"}}, Metadata: map[string]any{cliproxyexecutor.ExecutionSessionMetadataKey: "account-headers-test"}}
 			req := cliproxyexecutor.Request{Model: "gpt-5.4", Payload: []byte(`{"model":"gpt-5.4","input":[]}`)}
+			host := &testCodexHeaderHost{}
+			opts.CodexHeaderHost = host
 			for i, want := range []string{"account-agent-a", "account-agent-b", "global-agent", "global-agent"} {
 				if i > 0 {
 					req.Model = "gpt-5.5"
@@ -67,14 +69,13 @@ func TestCodexAccountHeadersRealRequests(t *testing.T) {
 						{Name: "X-Account-Test", Operation: "default", Value: "added"},
 						{Name: "X-OpenAI-Internal-Codex-Responses-Lite", Operation: "delete"},
 					}
-					if i == 2 {
-						rules := auth.Metadata[authheaders.MetadataKey].([]authheaders.Rule)
-						expired := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
-						rules[1].DurationMinutes = 10
-						rules[1].ExpiresAt = &expired
-					}
 				} else {
 					delete(auth.Metadata, authheaders.MetadataKey)
+				}
+				host.response = pluginapi.CodexHeaderResponse{Headers: http.Header{"User-Agent": {want}}, Signature: fmt.Sprintf("plugin-version-%d", i)}
+				if i < 3 {
+					host.response.Headers.Set("X-Account-Test", "added")
+					host.response.ClearHeaders = []string{"X-OpenAI-Internal-Codex-Responses-Lite"}
 				}
 				var err error
 				if strings.HasSuffix(transport, "-stream") {
@@ -99,6 +100,13 @@ func TestCodexAccountHeadersRealRequests(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				wantRules, err := json.Marshal(auth.Metadata[authheaders.MetadataKey])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if host.prepared.AuthID != auth.ID || host.prepared.Model != req.Model || string(host.prepared.Rules) != string(wantRules) {
+					t.Fatalf("selected account/model/rules not passed to plugin: %#v", host.prepared)
+				}
 				var got http.Header
 				select {
 				case got = <-headers:
@@ -112,7 +120,7 @@ func TestCodexAccountHeadersRealRequests(t *testing.T) {
 					t.Fatal("credential headers changed")
 				}
 				if i < 3 && (got.Get("X-Account-Test") != "added" || got.Get("X-OpenAI-Internal-Codex-Responses-Lite") != "") {
-					t.Fatal("custom/default/delete rule not applied")
+					t.Fatal("plugin header additions/deletions not applied")
 				}
 				if i == 3 && got.Get("X-Account-Test") != "" {
 					t.Fatal("removed rules still applied")
@@ -134,8 +142,5 @@ func TestCodexAccountHeadersSessionReuse(t *testing.T) {
 	}
 	if got, _, _, _, _ := detachMismatchedWebsocketSessionConn(sess, "a", "ws://test", "after"); got != conn || sess.conn != nil {
 		t.Fatal("old connection not detached")
-	}
-	if helps.CodexAccountHeaderRulesKey(nil) != "" {
-		t.Fatal("missing account has a rules key")
 	}
 }

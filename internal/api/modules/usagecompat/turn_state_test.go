@@ -1,10 +1,13 @@
 package usagecompat
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,90 +15,90 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/turnstate"
 )
 
-func TestTurnStateSettingsRoutesAndRestore(t *testing.T) {
-	t.Setenv(usageSQLitePathEnv, filepath.Join(t.TempDir(), "usage.sqlite3"))
-	old := turnstate.Default
-	turnstate.Default = turnstate.NewManager()
-	t.Cleanup(func() { turnstate.Default.Close(); turnstate.Default = old })
-	router := gin.New()
-	module := New(NewHandler(nil, nil), WithMiddleware(func(c *gin.Context) {
-		if c.GetHeader("Authorization") != "Bearer test-admin" {
-			c.AbortWithStatus(http.StatusUnauthorized)
+func TestTurnStateSettingsRoutesRetired(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "missing-store"
+		if existing {
+			name = "existing-store"
 		}
-	}))
-	if err := module.Register(router); err != nil {
-		t.Fatal(err)
-	}
-	call := func(method, body string, authorized bool) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(method, "/v0/management/usage/turn-state-auto-rules", strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/json")
-		if authorized {
-			r.Header.Set("Authorization", "Bearer test-admin")
-		}
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, r)
-		return w
-	}
-	for _, method := range []string{"GET", "PUT"} {
-		if w := call(method, `{"enabled":true,"max_chars":312}`, false); w.Code != 401 {
-			t.Fatal("unauthorized access")
-		}
-	}
-	w := call("GET", "", true)
-	var status turnstate.Status
-	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil || status.Enabled || status.MaxChars != 292 || w.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("incorrect default settings")
-	}
-	for _, body := range []string{`{}`, `{"enabled":true}`, `{"enabled":true,"max_chars":0}`, `{"enabled":true,"max_chars":8193}`, `{"enabled":true,"max_chars":2.5}`, `{"enabled":true,"max_chars":"312"}`, `{"enabled":true,"max_chars":312,"unknown":1}`} {
-		if w := call("PUT", body, true); w.Code != 400 {
-			t.Fatalf("invalid input accepted: %s", body)
-		}
-	}
-	if turnstate.Default.Status().Enabled {
-		t.Fatal("invalid request changed settings")
-	}
-	if w := call("PUT", `{"enabled":true,"max_chars":312}`, true); w.Code != 200 {
-		t.Fatalf("configure failed: %s", w.Body.String())
-	}
-	turnstate.Default.Close()
-	turnstate.Default = turnstate.NewManager()
-	restoreTurnStateStore()
-	if status := turnstate.Default.Status(); !status.Enabled || status.MaxChars != 312 {
-		t.Fatal("startup failed to restore settings without admin request")
-	}
-	if w := call("PUT", `{"enabled":false,"max_chars":292}`, true); w.Code != 200 || turnstate.Default.Status().Enabled {
-		t.Fatal("disable failed")
-	}
-	if w := call("PUT", `{"enabled":true,"max_chars":292,"account_scope":"selected","auth_ids":["a","b"]}`, true); w.Code != 200 {
-		t.Fatalf("select accounts: %s", w.Body.String())
-	}
-	if w := call("PUT", `{"enabled":true,"max_chars":312}`, true); w.Code != 200 {
-		t.Fatal(w.Body.String())
-	}
-	if status := turnstate.Default.Status(); status.AccountScope != "selected" || len(status.AuthIDs) != 2 || turnstate.Default.AccountEnabled("c") {
-		t.Fatal("legacy PUT widened selected scope")
-	}
-	for _, body := range []string{
-		`{"enabled":true,"max_chars":292,"account_scope":"invalid"}`,
-		`{"enabled":true,"max_chars":292,"account_scope":""}`,
-		`{"enabled":true,"max_chars":292,"auth_ids":[""]}`,
-		`{"enabled":true,"max_chars":292,"auth_ids":"a"}`,
-		`{"enabled":true,"max_chars":292} {}`,
-	} {
-		if w := call("PUT", body, true); w.Code != 400 {
-			t.Fatalf("invalid account scope accepted: %s", body)
-		}
-	}
-	if w := call("PUT", `{"enabled":true,"max_chars":292,"account_scope":"selected","auth_ids":[]}`, true); w.Code != 200 {
-		t.Fatal(w.Body.String())
-	}
-	if turnstate.Default.AccountEnabled("a") {
-		t.Fatal("empty selection enabled account")
-	}
-	turnstate.Default.Close()
-	turnstate.Default = turnstate.NewManager()
-	restoreTurnStateStore()
-	if status := turnstate.Default.Status(); status.AccountScope != "selected" || len(status.AuthIDs) != 0 || turnstate.Default.AccountEnabled("a") {
-		t.Fatal("empty selected scope not restored")
+		t.Run(name, func(t *testing.T) {
+			base := filepath.Join(t.TempDir(), "usage.sqlite3")
+			t.Setenv(usageSQLitePathEnv, base)
+			path := base + ".turn-state.sqlite3"
+			var before []byte
+			if existing {
+				stored := turnstate.NewManager()
+				if err := stored.Open(path); err != nil {
+					t.Fatal(err)
+				}
+				if err := stored.Configure(turnstate.Settings{Enabled: true, MaxChars: 312}); err != nil {
+					stored.Close()
+					t.Fatal(err)
+				}
+				stored.Close()
+				var err error
+				before, err = os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			old := turnstate.Default
+			turnstate.Default = turnstate.NewManager()
+			t.Cleanup(func() { turnstate.Default.Close(); turnstate.Default = old })
+			initial := turnstate.Default.Status()
+			router := gin.New()
+			module := New(NewHandler(nil, nil), WithMiddleware(func(c *gin.Context) {
+				if c.GetHeader("Authorization") != "Bearer test-admin" {
+					c.AbortWithStatus(http.StatusUnauthorized)
+				}
+			}))
+			if err := module.Register(router); err != nil {
+				t.Fatal(err)
+			}
+			for _, method := range []string{http.MethodGet, http.MethodPut} {
+				for _, authorized := range []bool{false, true} {
+					for _, body := range []string{`{"enabled":false,"max_chars":292}`, "invalid JSON"} {
+						req := httptest.NewRequest(method, "/v0/management/usage/turn-state-auto-rules", strings.NewReader(body))
+						if authorized {
+							req.Header.Set("Authorization", "Bearer test-admin")
+						}
+						w := httptest.NewRecorder()
+						router.ServeHTTP(w, req)
+						if !authorized {
+							if w.Code != http.StatusUnauthorized {
+								t.Fatalf("unauthorized status: %d", w.Code)
+							}
+							continue
+						}
+						var out struct {
+							Error       string
+							Replacement string
+						}
+						if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+							t.Fatal(err)
+						}
+						if w.Code != http.StatusGone || out.Error == "" || out.Replacement != turnStatePluginEndpoint || w.Header().Get("Cache-Control") != "no-store" {
+							t.Fatalf("unexpected retirement response: %d %s", w.Code, w.Body.String())
+						}
+					}
+				}
+			}
+			if !reflect.DeepEqual(initial, turnstate.Default.Status()) {
+				t.Fatal("registration or legacy request restored or mutated native settings")
+			}
+			after, err := os.ReadFile(path)
+			if existing {
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatal("legacy store changed")
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("legacy store created: %v", err)
+			}
+			for _, suffix := range []string{"-wal", "-shm"} {
+				if _, err := os.Stat(path + suffix); !os.IsNotExist(err) {
+					t.Fatalf("legacy store sidecar created: %s (%v)", suffix, err)
+				}
+			}
+		})
 	}
 }

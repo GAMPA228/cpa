@@ -27,6 +27,9 @@ func handleMethod(p *headerPlugin, method string, raw []byte) ([]byte, error) {
 		value = registration()
 	case pluginabi.MethodCodexHeadersPrepare:
 		value, err = p.prepare(raw)
+	case pluginabi.MethodPluginQuiesce:
+		p.close()
+		value = struct{}{}
 	case pluginabi.MethodCodexHeadersObserve:
 		err = p.observe(raw)
 		value = struct{}{}
