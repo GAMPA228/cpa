@@ -82,6 +82,10 @@ func TestRegistrationAndDefaultDisabledFallback(t *testing.T) {
 	if registration().SchemaVersion != 7 || registration().SchemaVersion != pluginabi.SchemaVersion || !registration().Capabilities.CodexHeaderPlugin {
 		t.Fatal("incorrect registration")
 	}
+	metadata := registration().Metadata
+	if metadata.Name == "" || metadata.Version == "" || metadata.Author == "" || metadata.GitHubRepository == "" {
+		t.Fatal("registration must supply all metadata required by the host")
+	}
 	encoded, err := handleMethod(p, pluginabi.MethodPluginRegister, encode(t, lifecycleRequest{}))
 	if err != nil || !strings.Contains(string(encoded), `"codex_header_plugin":true`) {
 		t.Fatalf("invalid ABI registration: %s %v", encoded, err)

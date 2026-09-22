@@ -53,6 +53,7 @@ func registration() pluginRegistration {
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
 			Name: "codex-headers", Version: "0.1.0", Author: "CLIProxyAPI",
+			GitHubRepository: "https://github.com/GAMPA228/cpa",
 			ConfigFields: []pluginapi.ConfigField{{
 				Name: "data_path", Type: pluginapi.ConfigFieldTypeString,
 				Description: "Optional absolute SQLite path for Turn State settings and rules. Defaults to the existing usagecompat Turn State database.",
