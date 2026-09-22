@@ -40,10 +40,11 @@ func (h *Handler) SetTurnStateSettings(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Enabled      *bool     `json:"enabled"`
-		MaxChars     *int      `json:"max_chars"`
-		AccountScope *string   `json:"account_scope"`
-		AuthIDs      *[]string `json:"auth_ids"`
+		Enabled         *bool     `json:"enabled"`
+		MaxChars        *int      `json:"max_chars"`
+		LifetimeSeconds *int      `json:"lifetime_seconds"`
+		AccountScope    *string   `json:"account_scope"`
+		AuthIDs         *[]string `json:"auth_ids"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(c.Writer, c.Request.Body, 3<<20))
 	decoder.DisallowUnknownFields()
@@ -56,6 +57,11 @@ func (h *Handler) SetTurnStateSettings(c *gin.Context) {
 		return
 	}
 	settings := turnstate.Settings{Enabled: *input.Enabled, MaxChars: *input.MaxChars}
+	if input.LifetimeSeconds != nil {
+		settings.LifetimeSeconds = *input.LifetimeSeconds
+	} else {
+		settings.LifetimeSeconds = turnstate.Default.Status().LifetimeSeconds
+	}
 	if input.AccountScope != nil {
 		if *input.AccountScope != "all" && *input.AccountScope != "selected" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "account_scope must be all or selected"})
@@ -71,7 +77,7 @@ func (h *Handler) SetTurnStateSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := turnstate.Default.PatchSettings(*input.Enabled, *input.MaxChars, input.AccountScope, input.AuthIDs); err != nil {
+	if err := turnstate.Default.PatchSettings(*input.Enabled, *input.MaxChars, input.AccountScope, input.AuthIDs, input.LifetimeSeconds); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Unable to persist turn state settings"})
 		return
 	}

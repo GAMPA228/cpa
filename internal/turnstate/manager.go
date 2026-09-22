@@ -18,12 +18,14 @@ const Header = "X-Codex-Turn-State"
 const Lifetime = time.Hour
 const RefreshBefore = 5 * time.Minute
 const MaxChars = 8192
+const DefaultLifetimeSeconds = 3600
 
 type Settings struct {
-	Enabled      bool     `json:"enabled"`
-	MaxChars     int      `json:"max_chars"`
-	AccountScope string   `json:"account_scope"`
-	AuthIDs      []string `json:"auth_ids"`
+	Enabled         bool     `json:"enabled"`
+	MaxChars        int      `json:"max_chars"`
+	LifetimeSeconds int      `json:"lifetime_seconds"`
+	AccountScope    string   `json:"account_scope"`
+	AuthIDs         []string `json:"auth_ids"`
 }
 
 type Status struct {
@@ -74,7 +76,7 @@ type Manager struct {
 var Default = NewManager()
 
 func NewManager() *Manager {
-	return &Manager{settings: Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}, rules: make(map[key]Rule), now: time.Now}
+	return &Manager{settings: Settings{MaxChars: 292, LifetimeSeconds: DefaultLifetimeSeconds, AccountScope: "all", AuthIDs: []string{}}, rules: make(map[key]Rule), now: time.Now}
 }
 
 // Value rejects ambiguous multi-valued headers. Length is measured before decoding.
@@ -99,6 +101,10 @@ func Value(headers http.Header) (string, *int) {
 // Parse checks only the public Fernet envelope, never the signature or ciphertext.
 // Expiry is our local policy; the upstream token does not declare its lifetime.
 func Parse(value string, now time.Time) (time.Time, bool) {
+	return parseWithLifetime(value, now, Lifetime)
+}
+
+func parseWithLifetime(value string, now time.Time, lifetime time.Duration) (time.Time, bool) {
 	if len(value) == 0 || len(value) > MaxChars || strings.ContainsAny(value, "\r\n \t") {
 		return time.Time{}, false
 	}
@@ -114,7 +120,7 @@ func Parse(value string, now time.Time) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	issued := time.Unix(int64(seconds), 0).UTC()
-	return issued, now.Before(issued.Add(Lifetime))
+	return issued, now.Before(issued.Add(lifetime))
 }
 
 func (m *Manager) Status() Status {
@@ -136,7 +142,15 @@ func (m *Manager) eligibleLocked(r Rule, now time.Time) bool {
 	if !r.IssuedAt.After(previous.IssuedAt) {
 		return false
 	}
-	return len(previous.Value) > m.settings.MaxChars || !now.Before(previous.ExpiresAt.Add(-RefreshBefore))
+	return len(previous.Value) > m.settings.MaxChars || !now.Before(previous.ExpiresAt.Add(-m.refreshBeforeLocked()))
+}
+
+func (m *Manager) refreshBeforeLocked() time.Duration {
+	window := time.Duration(m.settings.LifetimeSeconds) * time.Second / 4
+	if window > RefreshBefore {
+		return RefreshBefore
+	}
+	return window
 }
 
 // Observe only queues observations from fresh upstream responses. It never reads disk.
@@ -151,11 +165,14 @@ func (m *Manager) Observe(authID, model, value string) {
 		return
 	}
 	now := m.now()
-	issued, valid := Parse(value, now)
+	m.mu.RLock()
+	lifetime := time.Duration(m.settings.LifetimeSeconds) * time.Second
+	m.mu.RUnlock()
+	issued, valid := parseWithLifetime(value, now, lifetime)
 	if !valid {
 		return
 	}
-	r := Rule{AuthID: authID, Model: model, Value: value, IssuedAt: issued, ExpiresAt: issued.Add(Lifetime)}
+	r := Rule{AuthID: authID, Model: model, Value: value, IssuedAt: issued, ExpiresAt: issued.Add(lifetime)}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.store == nil || m.closing || !m.eligibleLocked(r, now) {

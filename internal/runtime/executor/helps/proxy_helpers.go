@@ -29,6 +29,7 @@ import (
 //   - *http.Client: An HTTP client with configured proxy or transport
 func NewProxyAwareHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyauth.Auth, timeout time.Duration) *http.Client {
 	httpClient := &http.Client{}
+	attachCodexCookieJar(httpClient, auth)
 	defer func() { diagnostics.WrapHTTP(ctx, httpClient) }()
 	if timeout > 0 {
 		httpClient.Timeout = timeout

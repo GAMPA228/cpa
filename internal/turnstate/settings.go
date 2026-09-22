@@ -8,6 +8,12 @@ import (
 
 // NormalizeSettings returns an owned, validated snapshot, including legacy defaults.
 func NormalizeSettings(settings Settings) (Settings, error) {
+	if settings.LifetimeSeconds == 0 {
+		settings.LifetimeSeconds = DefaultLifetimeSeconds
+	}
+	if settings.LifetimeSeconds < 60 || settings.LifetimeSeconds > 3600 {
+		return Settings{}, errors.New("lifetime_seconds must be between 60 and 3600")
+	}
 	if settings.MaxChars < 1 || settings.MaxChars > MaxChars {
 		return Settings{}, errors.New("max_chars must be an integer between 1 and 8192")
 	}

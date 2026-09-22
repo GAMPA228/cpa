@@ -401,6 +401,7 @@ func NewUtlsHTTPClient(ctx context.Context, cfg *config.Config, auth *cliproxyau
 			fallback:  standardTransport,
 		},
 	}
+	attachCodexCookieJar(client, auth)
 	if timeout > 0 {
 		client.Timeout = timeout
 	}

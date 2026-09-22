@@ -50,6 +50,8 @@ func (m *Manager) Open(path string) error {
 		"PRAGMA busy_timeout=3000", "PRAGMA journal_mode=DELETE", "PRAGMA secure_delete=ON",
 		"CREATE TABLE IF NOT EXISTS settings(id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL, max_chars INTEGER NOT NULL)",
 		"INSERT OR IGNORE INTO settings VALUES(1,0,292)",
+		"CREATE TABLE IF NOT EXISTS lifetime_settings(id INTEGER PRIMARY KEY CHECK(id=1), seconds INTEGER NOT NULL)",
+		"INSERT OR IGNORE INTO lifetime_settings VALUES(1,3600)",
 		"CREATE TABLE IF NOT EXISTS account_scope(id INTEGER PRIMARY KEY CHECK(id=1), scope TEXT NOT NULL, auth_ids TEXT NOT NULL)",
 		"INSERT OR IGNORE INTO account_scope VALUES(1,'all','[]')",
 		"CREATE TABLE IF NOT EXISTS rules(auth_id TEXT NOT NULL, model TEXT NOT NULL, value TEXT NOT NULL, issued_at INTEGER NOT NULL, PRIMARY KEY(auth_id,model))",
@@ -60,6 +62,9 @@ func (m *Manager) Open(path string) error {
 	}
 	var settings Settings
 	if err = db.QueryRow("SELECT enabled,max_chars FROM settings WHERE id=1").Scan(&settings.Enabled, &settings.MaxChars); err != nil {
+		return err
+	}
+	if err = db.QueryRow("SELECT seconds FROM lifetime_settings WHERE id=1").Scan(&settings.LifetimeSeconds); err != nil {
 		return err
 	}
 	var idsJSON string
@@ -85,7 +90,7 @@ func (m *Manager) Open(path string) error {
 			return err
 		}
 		r.IssuedAt = time.Unix(issued, 0).UTC()
-		r.ExpiresAt = r.IssuedAt.Add(Lifetime)
+		r.ExpiresAt = r.IssuedAt.Add(time.Duration(settings.LifetimeSeconds) * time.Second)
 		// Retain expired entries for the rules page, but reject malformed stored tokens.
 		if parsed, valid := Parse(r.Value, r.IssuedAt); valid && parsed.Equal(r.IssuedAt) {
 			rules[key{r.AuthID, r.Model}] = r
@@ -121,11 +126,14 @@ func (m *Manager) Configure(settings Settings) error {
 
 // PatchSettings merges omitted scope fields while holding the persistence lock,
 // so a concurrent legacy client cannot restore a stale, broader account scope.
-func (m *Manager) PatchSettings(enabled bool, maxChars int, scope *string, ids *[]string) error {
+func (m *Manager) PatchSettings(enabled bool, maxChars int, scope *string, ids *[]string, lifetime ...*int) error {
 	m.writeMu.Lock()
 	defer m.writeMu.Unlock()
 	settings := m.Status().Settings
 	settings.Enabled, settings.MaxChars = enabled, maxChars
+	if len(lifetime) > 0 && lifetime[0] != nil {
+		settings.LifetimeSeconds = *lifetime[0]
+	}
 	if scope != nil {
 		settings.AccountScope = *scope
 	}
@@ -154,6 +162,9 @@ func (m *Manager) configureLocked(settings Settings) error {
 	if _, err = tx.Exec("UPDATE settings SET enabled=?,max_chars=? WHERE id=1", settings.Enabled, settings.MaxChars); err != nil {
 		return err
 	}
+	if _, err = tx.Exec("UPDATE lifetime_settings SET seconds=? WHERE id=1", settings.LifetimeSeconds); err != nil {
+		return err
+	}
 	idsJSON, err := json.Marshal(settings.AuthIDs)
 	if err != nil {
 		return err
@@ -166,6 +177,10 @@ func (m *Manager) configureLocked(settings Settings) error {
 	}
 	m.mu.Lock()
 	m.setSettingsLocked(settings)
+	for k, rule := range m.rules {
+		rule.ExpiresAt = rule.IssuedAt.Add(time.Duration(settings.LifetimeSeconds) * time.Second)
+		m.rules[k] = rule
+	}
 	m.generation++
 	m.mu.Unlock()
 	return nil

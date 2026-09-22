@@ -61,9 +61,37 @@ func requireRule(t *testing.T, m *Manager, want Rule) {
 	}
 }
 
+func TestConfigurableLifetimeUpdatesExistingRulesAndPersists(t *testing.T) {
+	m, clock, path := newTestManager(t)
+	configureTestManager(t, m, true, 292)
+	m.persist(testObservation(m, "a", "model", testEpoch, 1))
+	seconds := 240
+	if err := m.PatchSettings(true, 292, nil, nil, &seconds); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := m.Lookup("a", "model"); !ok || !got.ExpiresAt.Equal(testEpoch.Add(240*time.Second)) {
+		t.Fatalf("updated expiry = %+v, %v", got, ok)
+	}
+	clock.set(testEpoch.Add(181 * time.Second))
+	_, omit, refresh := m.PrepareRequest("a", "model")
+	if !omit || refresh == nil {
+		t.Fatal("short lifetime did not refresh before expiry")
+	}
+	refresh.Finish(false)
+	m.Close()
+	m = openTestManager(t, path, clock)
+	if got := m.Status().LifetimeSeconds; got != seconds {
+		t.Fatalf("persisted lifetime = %d", got)
+	}
+	clock.set(testEpoch.Add(241 * time.Second))
+	if _, ok := m.Lookup("a", "model"); ok {
+		t.Fatal("expired rule remained active")
+	}
+}
+
 func TestObserveDrainDeduplicatesAndScopesRules(t *testing.T) {
 	m, clock, path := newTestManager(t)
-	if got := m.Status(); !reflect.DeepEqual(got.Settings, Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}) {
+	if got := m.Status(); !reflect.DeepEqual(got.Settings, Settings{MaxChars: 292, LifetimeSeconds: 3600, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("persisted defaults = %+v", got)
 	}
 	m.Observe("disabled", "model", testToken(testEpoch, 1))
@@ -181,7 +209,7 @@ func TestPersistenceRestartKeepsSettingsAndOriginalDeadlines(t *testing.T) {
 	m.Close()
 	clock.set(testEpoch.Add(40 * time.Minute))
 	m = openTestManager(t, path, clock)
-	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{Enabled: true, MaxChars: 200, AccountScope: "all", AuthIDs: []string{}}) {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{Enabled: true, MaxChars: 200, LifetimeSeconds: 3600, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("restarted settings = %+v", got)
 	}
 	requireRule(t, m, obs.rule)
@@ -189,7 +217,7 @@ func TestPersistenceRestartKeepsSettingsAndOriginalDeadlines(t *testing.T) {
 	m.Close()
 	clock.set(testEpoch.Add(time.Hour))
 	m = openTestManager(t, path, clock)
-	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{MaxChars: 150, AccountScope: "all", AuthIDs: []string{}}) {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{MaxChars: 150, LifetimeSeconds: 3600, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("disabled settings not persisted: %+v", got)
 	}
 	configureTestManager(t, m, true, 150)
@@ -245,7 +273,7 @@ func TestConfigureRejectsInvalidThresholds(t *testing.T) {
 			t.Fatalf("accepted max_chars=%d", max)
 		}
 	}
-	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{MaxChars: 292, AccountScope: "all", AuthIDs: []string{}}) {
+	if got := m.Status().Settings; !reflect.DeepEqual(got, Settings{MaxChars: 292, LifetimeSeconds: 3600, AccountScope: "all", AuthIDs: []string{}}) {
 		t.Fatalf("invalid settings activated: %+v", got)
 	}
 	for _, max := range []int{1, MaxChars} {

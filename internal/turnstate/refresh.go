@@ -51,7 +51,7 @@ func (m *Manager) PrepareRequest(authID, model string) (value string, omit bool,
 	}
 	now := m.now()
 	usable := len(rule.Value) <= m.settings.MaxChars && now.Before(rule.ExpiresAt)
-	if usable && now.Before(rule.ExpiresAt.Add(-RefreshBefore)) {
+	if usable && now.Before(rule.ExpiresAt.Add(-m.refreshBeforeLocked())) {
 		return rule.Value, false, nil
 	}
 	previous := m.refreshes[k]
