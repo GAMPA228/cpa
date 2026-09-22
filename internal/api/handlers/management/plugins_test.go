@@ -113,8 +113,9 @@ func TestListPluginsIncludesScannedAndConfiguredPlugins(t *testing.T) {
 	}
 
 	var body struct {
-		PluginsEnabled bool `json:"plugins_enabled"`
-		Plugins        []struct {
+		PluginsEnabled   bool `json:"plugins_enabled"`
+		PluginsSupported bool `json:"plugins_supported"`
+		Plugins          []struct {
 			ID               string `json:"id"`
 			Path             string `json:"path"`
 			Configured       bool   `json:"configured"`
@@ -133,6 +134,9 @@ func TestListPluginsIncludesScannedAndConfiguredPlugins(t *testing.T) {
 	}
 	if body.PluginsEnabled {
 		t.Fatal("plugins_enabled = true, want false")
+	}
+	if body.PluginsSupported != (pluginhost.SupportPluginHeaderValue() == "1") {
+		t.Fatal("plugins_supported does not match this binary's loader")
 	}
 	entries := map[string]struct {
 		Configured       bool
@@ -386,6 +390,54 @@ func TestPatchPluginEnabledUpdatesOnlyPluginConfig(t *testing.T) {
 	raw := marshalPluginRaw(t, item)
 	if !strings.Contains(raw, "mode: safe") {
 		t.Fatalf("raw config lost custom field:\n%s", raw)
+	}
+}
+
+func TestPatchPluginsEnabledRequiresLoaderAndPreservesInstances(t *testing.T) {
+	t.Parallel()
+	h := &Handler{
+		cfg: &config.Config{Plugins: config.PluginsConfig{
+			Configs: map[string]config.PluginInstanceConfig{"sample": pluginConfigFromYAML(t, "enabled: true\nmode: safe\n")},
+		}},
+		configFilePath: writeTestConfigFile(t),
+	}
+	reloads, reloadDone := captureConfigReload(h)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/v0/management/plugins-enabled", strings.NewReader(`{"enabled":true}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.PatchPluginsEnabled(c)
+	if pluginhost.SupportPluginHeaderValue() != "1" {
+		if rec.Code != http.StatusUnprocessableEntity || h.cfg.Plugins.Enabled {
+			t.Fatalf("unsupported loader accepted enable: %d %s", rec.Code, rec.Body.String())
+		}
+		return
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("enable status = %d; %s", rec.Code, rec.Body.String())
+	}
+	if snapshot := waitForAsyncReload(t, reloads); !snapshot.Plugins.Enabled {
+		t.Fatal("enabled value missing from reload snapshot")
+	}
+	waitForReloadDone(t, reloadDone)
+	if raw := marshalPluginRaw(t, h.cfg.Plugins.Configs["sample"]); !strings.Contains(raw, "mode: safe") {
+		t.Fatalf("global toggle changed plugin config: %s", raw)
+	}
+}
+
+func TestPatchPluginsEnabledRollsBackOnSaveFailure(t *testing.T) {
+	t.Parallel()
+	h := &Handler{
+		cfg: &config.Config{Plugins: config.PluginsConfig{Enabled: true}},
+		configFilePath: filepath.Join(t.TempDir(), "missing", "config.yaml"),
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPatch, "/v0/management/plugins-enabled", strings.NewReader(`{"enabled":false}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	h.PatchPluginsEnabled(c)
+	if rec.Code != http.StatusInternalServerError || !h.cfg.Plugins.Enabled {
+		t.Fatalf("save failure should preserve previous state: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

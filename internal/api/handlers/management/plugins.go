@@ -19,9 +19,10 @@ import (
 )
 
 type pluginListResponse struct {
-	PluginsEnabled bool              `json:"plugins_enabled"`
-	PluginsDir     string            `json:"plugins_dir"`
-	Plugins        []pluginListEntry `json:"plugins"`
+	PluginsEnabled   bool              `json:"plugins_enabled"`
+	PluginsSupported bool              `json:"plugins_supported"`
+	PluginsDir       string            `json:"plugins_dir"`
+	Plugins          []pluginListEntry `json:"plugins"`
 }
 
 type pluginListEntry struct {
@@ -67,8 +68,9 @@ type pluginMenuInfo struct {
 func (h *Handler) ListPlugins(c *gin.Context) {
 	if h == nil || h.cfg == nil {
 		c.JSON(http.StatusOK, pluginListResponse{
-			PluginsDir: "plugins",
-			Plugins:    []pluginListEntry{},
+			PluginsDir:       "plugins",
+			Plugins:          []pluginListEntry{},
+			PluginsSupported: pluginhost.SupportPluginHeaderValue() == "1",
 		})
 		return
 	}
@@ -153,10 +155,44 @@ func (h *Handler) ListPlugins(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, pluginListResponse{
-		PluginsEnabled: pluginsEnabled,
-		PluginsDir:     htmlsanitize.String(pluginsDir),
-		Plugins:        out,
+		PluginsEnabled:   pluginsEnabled,
+		PluginsSupported: pluginhost.SupportPluginHeaderValue() == "1",
+		PluginsDir:       htmlsanitize.String(pluginsDir),
+		Plugins:          out,
 	})
+}
+
+// PatchPluginsEnabled changes the global plugin switch without replacing other settings.
+func (h *Handler) PatchPluginsEnabled(c *gin.Context) {
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || body.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_body", "message": "enabled is required"})
+		return
+	}
+	if *body.Enabled && pluginhost.SupportPluginHeaderValue() != "1" {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "plugin_loader_unavailable", "message": "plugin loading requires a cgo-enabled server binary"})
+		return
+	}
+	h.mu.Lock()
+	if h.cfg == nil {
+		h.mu.Unlock()
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "config_unavailable"})
+		return
+	}
+	previous := h.cfg.Plugins.Enabled
+	h.cfg.Plugins.Enabled = *body.Enabled
+	snapshot, ok := h.saveConfigAndSnapshotLocked(c)
+	if !ok {
+		h.cfg.Plugins.Enabled = previous
+	}
+	h.mu.Unlock()
+	if !ok {
+		return
+	}
+	h.reloadConfigAfterManagementSaveAsync(c.Request.Context(), snapshot)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "plugins_enabled": *body.Enabled})
 }
 
 // GetPluginConfig returns the preserved plugins.configs.<id> object as JSON.
