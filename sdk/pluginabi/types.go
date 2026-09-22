@@ -17,7 +17,10 @@ const (
 	// Version 6 preserves raw JSON bodies for plugin management responses.
 	// Plugins that still require HTML entity escaping on JSON response strings
 	// should keep schema_version < 6.
-	SchemaVersion uint32 = 6
+	SchemaVersion uint32 = 7
+	// SchemaVersionCodexHeaders is the first schema version with the Codex
+	// upstream header lifecycle capability.
+	SchemaVersionCodexHeaders uint32 = 7
 	// SchemaVersionStreamChunkOmitRequestBody is the first schema version that omits
 	// request bodies on payload stream-chunk interceptor calls.
 	SchemaVersionStreamChunkOmitRequestBody uint32 = 3
@@ -67,6 +70,9 @@ const (
 	MethodRequestInterceptBefore = "request.intercept_before"
 	MethodRequestInterceptAfter  = "request.intercept_after"
 	MethodRequestComplete        = "request.complete"
+	MethodCodexHeadersPrepare    = "codex.headers.prepare"
+	MethodCodexHeadersObserve    = "codex.headers.observe"
+	MethodCodexHeadersComplete   = "codex.headers.complete"
 
 	MethodResponseTranslate            = "response.translate"
 	MethodResponseNormalizeBefore      = "response.normalize_before"

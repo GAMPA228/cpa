@@ -24,6 +24,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = withCodexHeaderHost(ctx, opts.CodexHeaderHost)
 	if opts.Alt == "responses/compact" {
 		return nil, statusErr{code: http.StatusBadRequest, msg: "streaming not supported for /responses/compact"}
 	}
@@ -125,7 +126,10 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 	}
 
 	// Resolve expiring rules after waiting for the preceding session request.
-	headerRulesKey, turnStateRefresh := helps.PrepareCodexAccountHeaders(wsHeaders, auth, baseModel)
+	headerRulesKey, turnStateRefresh, errHeaders := prepareCodexUpstreamHeaders(ctx, opts, wsHeaders, auth, baseModel, wsURL)
+	if errHeaders != nil {
+		return nil, errHeaders
+	}
 	refreshAttempted, refreshTransferred := false, false
 	defer func() {
 		if !refreshTransferred {
@@ -167,7 +171,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		upstreamHeaders = respHS.Header.Clone()
 	}
 	if errDial != nil {
-		helps.ObserveCodexTurnState(reporter, auth, baseModel, respHS)
+		observeCodexUpstreamHeaders(ctx, opts, reporter, auth, baseModel, wsURL, respHS)
 		bodyErr := websocketHandshakeBody(respHS)
 		if respHS != nil {
 			helps.RecordAPIWebsocketUpgradeRejection(ctx, e.cfg, websocketUpgradeRequestLog(wsReqLog), respHS.StatusCode, respHS.Header.Clone(), bodyErr)
@@ -200,7 +204,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 		return nil, errBind
 	}
 	recordAPIWebsocketHandshake(ctx, e.cfg, respHS)
-	helps.ObserveCodexTurnState(reporter, auth, baseModel, respHS)
+	observeCodexUpstreamHeaders(ctx, opts, reporter, auth, baseModel, wsURL, respHS)
 	reporter.StartResponseTTFT()
 
 	if sess == nil {
@@ -236,7 +240,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 
 			// Retry once with a new websocket connection for the same execution session.
 			connRetry, closerRetry, respHSRetry, errDialRetry := e.ensureUpstreamConnWithRules(ctx, auth, sess, authID, wsURL, wsHeaders, headerRulesKey)
-			helps.ObserveCodexTurnState(reporter, auth, baseModel, respHSRetry)
+			observeCodexUpstreamHeaders(ctx, opts, reporter, auth, baseModel, wsURL, respHSRetry)
 			if errDialRetry != nil || connRetry == nil {
 				closeHTTPResponseBody(respHSRetry, "codex websockets executor: close handshake response body error")
 				helps.RecordAPIWebsocketError(ctx, e.cfg, "dial_retry", errDialRetry)
@@ -343,7 +347,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			}
 			msgType, payload, errRead := readCodexWebsocketMessage(ctx, sess, conn, readCh)
 			if errRead == nil && msgType == websocket.TextMessage {
-				helps.ObserveCodexTurnStateEvent(reporter, auth, baseModel, payload)
+				observeCodexTurnStateEvent(ctx, opts, reporter, auth, baseModel, wsURL, payload)
 			}
 			if errRead != nil {
 				mappedErr := mapCodexWebsocketReadError(errRead)
@@ -647,7 +651,7 @@ func (e *CodexWebsocketsExecutor) ExecuteStream(ctx context.Context, auth *clipr
 			}
 			msgType, payload, errRead := readCodexWebsocketMessage(ctx, sess, conn, readCh)
 			if errRead == nil && msgType == websocket.TextMessage {
-				helps.ObserveCodexTurnStateEvent(reporter, auth, baseModel, payload)
+				observeCodexTurnStateEvent(ctx, opts, reporter, auth, baseModel, wsURL, payload)
 			}
 			if errRead != nil {
 				if sess != nil && ctx != nil && ctx.Err() != nil {

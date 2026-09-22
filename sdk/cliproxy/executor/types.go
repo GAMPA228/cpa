@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
 )
 
@@ -212,10 +213,17 @@ type Options struct {
 	Metadata map[string]any
 	// RequestAfterAuthInterceptor runs after credential selection and before executor translation.
 	RequestAfterAuthInterceptor RequestAfterAuthInterceptor
+	// CodexHeaderHost is called on the final upstream request and the raw response.
+	CodexHeaderHost CodexHeaderHost
 	// WebSocketResponseObserver receives upstream WebSocket response events during execution.
 	WebSocketResponseObserver WebSocketResponseObserver
 	// ExecutionLifecycle owns Home-dispatched execution resources. Executors must not add it to request metadata.
 	ExecutionLifecycle ExecutionLifecycle
+}
+
+type CodexHeaderHost interface {
+	pluginapi.CodexHeaderPlugin
+	HasCodexHeaderPlugin() bool
 }
 
 // EnsureMetadata initializes and returns Metadata, ensuring it is non-nil.

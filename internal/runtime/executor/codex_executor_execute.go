@@ -90,7 +90,10 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 	applyModelHeaderOverrides(httpReq.Header, baseModel, e.cfg)
 	applyCodexRoutingHintHeader(httpReq.Header, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
-	_, turnStateRefresh := helps.PrepareCodexAccountHeaders(httpReq.Header, auth, baseModel)
+	_, turnStateRefresh, errHeaders := prepareCodexUpstreamHeaders(ctx, opts, httpReq.Header, auth, baseModel, url)
+	if errHeaders != nil {
+		return resp, errHeaders
+	}
 	defer turnStateRefresh.Finish(true)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -110,6 +113,9 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		AuthValue: authValue,
 	})
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
+	if opts.CodexHeaderHost != nil && opts.CodexHeaderHost.HasCodexHeaderPlugin() {
+		httpClient.Jar = nil
+	}
 	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -122,7 +128,7 @@ func (e *CodexExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, re
 		}
 	}()
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
-	helps.ObserveCodexTurnState(reporter, auth, baseModel, httpResp)
+	observeCodexUpstreamHeaders(ctx, opts, reporter, auth, baseModel, url, httpResp)
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(httpResp.Body)
 		b = applyCodexIdentityConfuseResponsePayload(b, identityState)
@@ -271,7 +277,10 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 	applyModelHeaderOverrides(httpReq.Header, baseModel, e.cfg)
 	applyCodexRoutingHintHeader(httpReq.Header, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
-	_, turnStateRefresh := helps.PrepareCodexAccountHeaders(httpReq.Header, auth, baseModel)
+	_, turnStateRefresh, errHeaders := prepareCodexUpstreamHeaders(ctx, opts, httpReq.Header, auth, baseModel, url)
+	if errHeaders != nil {
+		return resp, errHeaders
+	}
 	defer turnStateRefresh.Finish(true)
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -291,6 +300,9 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 		AuthValue: authValue,
 	})
 	httpClient := helps.NewUtlsHTTPClient(ctx, e.cfg, auth, 0)
+	if opts.CodexHeaderHost != nil && opts.CodexHeaderHost.HasCodexHeaderPlugin() {
+		httpClient.Jar = nil
+	}
 	httpClient = reporter.TrackHTTPClient(httpClient)
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
@@ -303,7 +315,7 @@ func (e *CodexExecutor) executeCompact(ctx context.Context, auth *cliproxyauth.A
 		}
 	}()
 	helps.RecordAPIResponseMetadata(ctx, e.cfg, httpResp.StatusCode, httpResp.Header.Clone())
-	helps.ObserveCodexTurnState(reporter, auth, baseModel, httpResp)
+	observeCodexUpstreamHeaders(ctx, opts, reporter, auth, baseModel, url, httpResp)
 	if httpResp.StatusCode < 200 || httpResp.StatusCode >= 300 {
 		b, _ := io.ReadAll(httpResp.Body)
 		b = applyCodexIdentityConfuseResponsePayload(b, identityState)

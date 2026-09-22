@@ -131,6 +131,9 @@ func registerRPCPlugin(ctx context.Context, host *Host, id string, client plugin
 	if resp.Capabilities.RequestInterceptor {
 		plugin.Capabilities.RequestInterceptor = adapter
 	}
+	if resp.Capabilities.CodexHeaderPlugin && schemaVersion >= pluginabi.SchemaVersionCodexHeaders {
+		plugin.Capabilities.CodexHeaderPlugin = adapter
+	}
 	if resp.Capabilities.RequestLifecyclePlugin {
 		plugin.Capabilities.RequestLifecyclePlugin = adapter
 	}

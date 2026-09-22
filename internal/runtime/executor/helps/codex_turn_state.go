@@ -28,8 +28,15 @@ func ObserveCodexTurnState(reporter *UsageReporter, auth *cliproxyauth.Auth, mod
 
 // Native Codex sockets can return fresh response headers in a metadata event.
 func ObserveCodexTurnStateEvent(reporter *UsageReporter, auth *cliproxyauth.Auth, model string, payload []byte) {
+	headers := CodexTurnStateEventHeaders(payload)
+	if len(headers) > 0 {
+		ObserveCodexTurnState(reporter, auth, model, &http.Response{StatusCode: http.StatusOK, Header: headers})
+	}
+}
+
+func CodexTurnStateEventHeaders(payload []byte) http.Header {
 	if gjson.GetBytes(payload, "type").String() != "codex.response.metadata" {
-		return
+		return nil
 	}
 	headers := make(http.Header)
 	gjson.GetBytes(payload, "headers").ForEach(func(name, value gjson.Result) bool {
@@ -47,7 +54,5 @@ func ObserveCodexTurnStateEvent(reporter *UsageReporter, auth *cliproxyauth.Auth
 		}
 		return true
 	})
-	if len(headers) > 0 {
-		ObserveCodexTurnState(reporter, auth, model, &http.Response{StatusCode: http.StatusOK, Header: headers})
-	}
+	return headers
 }

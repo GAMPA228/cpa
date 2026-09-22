@@ -341,6 +341,11 @@ func (h *BaseAPIHandler) interceptorHost() PluginInterceptorHost {
 	return h.PluginHost
 }
 
+func (h *BaseAPIHandler) codexHeaderHost() coreexecutor.CodexHeaderHost {
+	host, _ := h.interceptorHost().(coreexecutor.CodexHeaderHost)
+	return host
+}
+
 func streamInterceptorsEnabled(host PluginInterceptorHost) bool {
 	if host == nil {
 		return false

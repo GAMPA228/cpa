@@ -106,6 +106,8 @@ type Capabilities struct {
 	ResponseAfterTranslator ResponseNormalizer
 	// RequestInterceptor rewrites execution requests before and after credential selection.
 	RequestInterceptor RequestInterceptor
+	// CodexHeaderPlugin owns account-scoped Codex headers at the actual upstream transport boundary.
+	CodexHeaderPlugin CodexHeaderPlugin
 	// RequestLifecyclePlugin asynchronously receives one terminal event for each request that reached request interception.
 	RequestLifecyclePlugin RequestLifecyclePlugin
 	// ResponseInterceptor rewrites successful non-streaming HTTP execution responses before downstream delivery.
@@ -986,6 +988,45 @@ type ResponseNormalizer interface {
 type RequestInterceptor interface {
 	InterceptRequestBeforeAuth(context.Context, RequestInterceptRequest) (RequestInterceptResponse, error)
 	InterceptRequestAfterAuth(context.Context, RequestInterceptRequest) (RequestInterceptResponse, error)
+}
+
+// CodexHeaderPlugin sees the final upstream headers (including failed responses).
+// The host falls back to its native header handling when this capability is absent.
+type CodexHeaderPlugin interface {
+	PrepareCodexHeaders(context.Context, CodexHeaderRequest) (CodexHeaderResponse, error)
+	ObserveCodexHeaders(context.Context, CodexHeaderObservation) error
+	CompleteCodexHeaders(context.Context, CodexHeaderCompletion) error
+}
+
+type CodexHeaderRequest struct {
+	AuthID  string      `json:"auth_id"`
+	OAuth   bool        `json:"oauth"`
+	Model   string      `json:"model"`
+	URL     string      `json:"url"`
+	Rules   []byte      `json:"rules,omitempty"`
+	Headers http.Header `json:"headers"`
+}
+
+type CodexHeaderResponse struct {
+	Headers      http.Header `json:"headers,omitempty"`
+	ClearHeaders []string    `json:"clear_headers,omitempty"`
+	Signature    string      `json:"signature,omitempty"`
+	// ReservationID must be passed to CompleteCodexHeaders even when the request fails.
+	ReservationID string `json:"reservation_id,omitempty"`
+}
+
+type CodexHeaderObservation struct {
+	AuthID     string      `json:"auth_id"`
+	OAuth      bool        `json:"oauth"`
+	Model      string      `json:"model"`
+	URL        string      `json:"url"`
+	StatusCode int         `json:"status_code"`
+	Headers    http.Header `json:"headers"`
+}
+
+type CodexHeaderCompletion struct {
+	ReservationID string `json:"reservation_id"`
+	Attempted     bool   `json:"attempted"`
 }
 
 // RequestLifecyclePlugin receives asynchronous terminal events after execution finishes, fails, is rejected, or is canceled.

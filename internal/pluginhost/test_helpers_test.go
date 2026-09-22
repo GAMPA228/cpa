@@ -56,6 +56,34 @@ func (l *testSymbolLookup) Call(ctx context.Context, method string, request []by
 		return l.callLifecycle(request, false)
 	case pluginabi.MethodPluginReconfigure:
 		return l.callLifecycle(request, true)
+	case pluginabi.MethodCodexHeadersPrepare:
+		var req pluginapi.CodexHeaderRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return nil, err
+		}
+		resp, err := l.active.Capabilities.CodexHeaderPlugin.PrepareCodexHeaders(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return marshalRPCResult(resp)
+	case pluginabi.MethodCodexHeadersObserve:
+		var req pluginapi.CodexHeaderObservation
+		if err := json.Unmarshal(request, &req); err != nil {
+			return nil, err
+		}
+		if err := l.active.Capabilities.CodexHeaderPlugin.ObserveCodexHeaders(ctx, req); err != nil {
+			return nil, err
+		}
+		return marshalRPCResult(rpcEmptyResponse{})
+	case pluginabi.MethodCodexHeadersComplete:
+		var req pluginapi.CodexHeaderCompletion
+		if err := json.Unmarshal(request, &req); err != nil {
+			return nil, err
+		}
+		if err := l.active.Capabilities.CodexHeaderPlugin.CompleteCodexHeaders(ctx, req); err != nil {
+			return nil, err
+		}
+		return marshalRPCResult(rpcEmptyResponse{})
 	case pluginabi.MethodThinkingIdentifier:
 		if l.active.Capabilities.ThinkingApplier == nil {
 			return nil, fmt.Errorf("missing thinking applier")
