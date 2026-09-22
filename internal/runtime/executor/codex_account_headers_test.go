@@ -134,13 +134,13 @@ func TestCodexAccountHeadersSessionReuse(t *testing.T) {
 	conn := &websocket.Conn{}
 	sess := &codexWebsocketSession{conn: conn, connCloser: newWebsocketConnectionCloser(conn), authID: "a", wsURL: "ws://test", headerRulesKey: "before"}
 	sess.resetUpstreamDisconnectError(conn)
-	if got, _ := existingWebsocketSessionConn(sess, "a", "ws://test", "before"); got != conn {
+	if got, _ := existingWebsocketSessionConn(sess, "a", "ws://test", "", "before"); got != conn {
 		t.Fatal("unchanged rules prevent reuse")
 	}
-	if got, _ := existingWebsocketSessionConn(sess, "a", "ws://test", "after"); got != nil {
+	if got, _ := existingWebsocketSessionConn(sess, "a", "ws://test", "", "after"); got != nil {
 		t.Fatal("changed rules reused old session")
 	}
-	if got, _, _, _, _ := detachMismatchedWebsocketSessionConn(sess, "a", "ws://test", "after"); got != conn || sess.conn != nil {
+	if got, _, _, _, _ := detachMismatchedWebsocketSessionConn(sess, "a", "ws://test", "", "after"); got != conn || sess.conn != nil {
 		t.Fatal("old connection not detached")
 	}
 }

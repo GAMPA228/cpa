@@ -122,6 +122,7 @@ func (m *Manager) Register(ctx context.Context, auth *Auth) (*Auth, error) {
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone.Clone())
 	}
+	m.structuralEpoch.Add(1)
 	m.queueRefreshReschedule(auth.ID)
 	_ = m.persist(ctx, auth)
 	m.hook.OnAuthRegistered(ctx, auth.Clone())
@@ -255,6 +256,16 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 		cooldownStateChanged = clearCooldownStateForAuth(auth, now) || cooldownStateChanged
 	}
 	auth.EnsureIndex()
+	// A minted Meta key must reach the configured store before requests can use it.
+	// Keep the epoch check, save and installation together so a concurrent reload
+	// or removal cannot let an obsolete mint overwrite the credential on disk.
+	persistMetaMint := (mode == updateModePrepare || mode == updateModeRefresh) && strings.EqualFold(strings.TrimSpace(auth.Provider), "meta")
+	if persistMetaMint {
+		if errPersist := m.persist(ctx, auth); errPersist != nil {
+			m.mu.Unlock()
+			return nil, fmt.Errorf("persist meta auth: %w", errPersist)
+		}
+	}
 	authClone := auth.Clone()
 	m.auths[auth.ID] = authClone
 	m.mu.Unlock()
@@ -264,8 +275,12 @@ func (m *Manager) updateInternal(ctx context.Context, base, auth *Auth, mode upd
 	if m.scheduler != nil {
 		m.scheduler.upsertAuth(authClone.Clone())
 	}
+	m.structuralEpoch.Add(1)
 	m.queueRefreshReschedule(auth.ID)
-	errPersist := m.persist(ctx, auth)
+	var errPersist error
+	if !persistMetaMint {
+		errPersist = m.persist(ctx, auth)
+	}
 	m.hook.OnAuthUpdated(ctx, auth.Clone())
 	if cooldownStateChanged {
 		m.persistCooldownStates(context.Background())
@@ -324,6 +339,7 @@ func (m *Manager) Remove(ctx context.Context, id string) {
 	if m.scheduler != nil {
 		m.scheduler.RecordRemovalTombstone(id, tombstoneEpoch)
 	}
+	m.structuralEpoch.Add(1)
 	m.queueRefreshUnschedule(id)
 	m.invalidateSessionAffinity(id)
 
@@ -406,6 +422,7 @@ func (m *Manager) Load(ctx context.Context) error {
 			m.scheduler.RecordRemovalTombstone(rt.id, rt.epoch)
 		}
 	}
+	m.structuralEpoch.Add(1)
 	m.syncScheduler()
 	return nil
 }

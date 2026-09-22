@@ -35,7 +35,7 @@ type Record struct {
 	AuthIndex       string
 	// ProxyMode is proxy, direct, or unknown for the effective configured route.
 	ProxyMode string
-	// ProxySource is auth, global, or none.
+	// ProxySource is request, auth, global, or none.
 	ProxySource string
 	// ProxyProtocol and ProxyEndpoint contain only connection-safe proxy address data.
 	ProxyProtocol string

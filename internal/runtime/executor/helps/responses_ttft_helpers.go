@@ -108,6 +108,9 @@ func IsResponsesTokenEvent(payload []byte) bool {
 // represents the first meaningful token event. It records the first packet arrival time as a fallback
 // and also observes the upstream model before client-facing response translation.
 func ObserveResponsesTokenEvent(reporter *UsageReporter, payload []byte) {
+	if reporter != nil && len(payload) > 0 {
+		reporter.ObserveResponseModel(payload)
+	}
 	if reporter == nil || len(payload) == 0 {
 		return
 	}

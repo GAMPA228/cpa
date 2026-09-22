@@ -262,6 +262,39 @@ func truncateWebsocketCloseReason(reason string, maxBytes int) string {
 	return truncated.String()
 }
 
+// responseSteeringEnabled keeps policy-bearing connections on the serial path,
+// where every create/append re-enters handler routing and request interceptors.
+// Decide before starting the socket reader; switching readers mid-stream is unsafe.
+func (h *OpenAIResponsesAPIHandler) responseSteeringEnabled() bool {
+	if h == nil || h.BaseAPIHandler == nil || h.Cfg == nil || !h.Cfg.CodexResponseSteering {
+		return false
+	}
+	cfg := h.Cfg
+	if cfg.ModelRewrite.Enabled && len(cfg.ModelRewrite.Rules) > 0 {
+		return false
+	}
+	for _, entry := range cfg.APIKeyEntries {
+		if entry.DailyTokenLimit > 0 {
+			return false
+		}
+	}
+	if len(cfg.APIKeyUpstreamAuthIndex) > 0 {
+		return false
+	}
+	// SDK callers may supply config without building the runtime routing index.
+	for _, group := range cfg.APIKeyGroups {
+		if len(group.APIKeys) == 0 {
+			continue
+		}
+		for _, authID := range group.UpstreamAuthIDs {
+			if strings.TrimSpace(authID) != "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // ResponsesWebsocket handles websocket requests for /v1/responses.
 // It accepts `response.create` and `response.append` requests and streams
 // response events back as JSON websocket text messages.
@@ -269,6 +302,13 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	conn, err := responsesWebsocketUpgrader.Upgrade(c.Writer, c.Request, websocketUpgradeHeaders(c.Request))
 	if err != nil {
 		return
+	}
+	var duplexInput <-chan cliproxyexecutor.WebsocketInput
+	if h.responseSteeringEnabled() {
+		socketCtx, cancelSocket := context.WithCancel(c.Request.Context())
+		defer cancelSocket()
+		c.Request = c.Request.WithContext(socketCtx)
+		duplexInput = readResponsesWebsocketInput(socketCtx, cancelSocket, conn)
 	}
 	writer := newResponsesWebsocketWriter(conn)
 	passthroughSessionID := uuid.NewString()
@@ -288,6 +328,12 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			UpstreamDisconnectChan(sessionID string) <-chan error
 		}
 		for _, provider := range []string{"codex", "xai"} {
+			if provider == "codex" && duplexInput != nil {
+				// Duplex owns the socket until its ordered event stream ends.
+				// An out-of-band close could discard an already received steering
+				// acknowledgement or pending event before it reaches the client.
+				continue
+			}
 			exec, ok := h.AuthManager.Executor(provider)
 			if !ok || exec == nil {
 				continue
@@ -390,7 +436,22 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 	}
 
 	for {
-		msgType, payload, errReadMessage := conn.ReadMessage()
+		var msgType int
+		var payload []byte
+		var errReadMessage error
+		if duplexInput == nil {
+			msgType, payload, errReadMessage = conn.ReadMessage()
+		} else {
+			select {
+			case message, ok := <-duplexInput:
+				if !ok {
+					return
+				}
+				msgType, payload, errReadMessage = websocket.TextMessage, message.Payload, message.Err
+			case <-c.Request.Context().Done():
+				return
+			}
+		}
 		if errReadMessage != nil {
 			wsTerminateErr = errReadMessage
 			if websocket.IsCloseError(errReadMessage, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) {
@@ -549,11 +610,23 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		var updatedLastRequest []byte
 		var errMsg *interfaces.ErrorMessage
 		previousResponseID := strings.TrimSpace(gjson.GetBytes(payload, "previous_response_id").String())
+		isPrewarm := !useUpstreamWebsocketPassthrough && shouldHandleResponsesWebsocketPrewarmLocally(payload, false)
 		if pendingPrewarmID != "" && previousResponseID != "" {
 			if previousResponseID != pendingPrewarmID {
 				errMsg = responsesWebsocketPreviousResponseNotFoundError()
 			} else {
 				requestJSON, updatedLastRequest, errMsg = normalizeResponsesWebsocketPrewarmFollowup(payload, lastRequest)
+			}
+		} else if isPrewarm && previousResponseID == "" {
+			input := gjson.GetBytes(payload, "input")
+			if input.Exists() && !input.IsArray() {
+				errMsg = &interfaces.ErrorMessage{
+					StatusCode: http.StatusBadRequest,
+					Error:      fmt.Errorf("websocket request requires array field: input"),
+				}
+			} else {
+				// Mid-connection self-contained prewarm without previous_response_id is a new transcript root.
+				requestJSON, updatedLastRequest, errMsg = normalizeResponseCreateRequest(normalizeResponseTranscriptReplacement(payload, lastRequest))
 			}
 		} else if pendingPrewarmID != "" && gjson.GetBytes(payload, "type").String() == wsRequestTypeCreate {
 			input := gjson.GetBytes(payload, "input")
@@ -607,7 +680,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		requestJSON = h.prepareCodexMultiAgentV2Tools(c, requestJSON)
 		requestJSON = h.prepareCodexOrphanDelegation(c, requestJSON)
 
-		if !useUpstreamWebsocketPassthrough && shouldHandleResponsesWebsocketPrewarmLocally(payload, lastRequest, false) {
+		if isPrewarm {
 			if updated, errDelete := sjson.DeleteBytes(requestJSON, "generate"); errDelete == nil {
 				requestJSON = updated
 			}
@@ -645,15 +718,24 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 		selectedAuthObserved := false
 		nativeRequest := util.IsCodexResponsesLiteRequest(payload, c.Request.Header)
 		var preserveNativeOutput atomic.Bool
+		var codexDuplexStream atomic.Bool
 		pinnedAuthAttempted := false
 		cliCtx, cliCancel := h.GetContextWithCancel(h, c, executionParent)
 		cliCtx = cliproxyexecutor.WithDownstreamWebsocket(cliCtx)
+		if duplexInput != nil {
+			cliCtx = cliproxyexecutor.WithWebsocketInput(cliCtx, duplexInput)
+			cliCtx = cliproxyexecutor.WithWebsocketAuthCheck(cliCtx, func(authID string) bool {
+				current, ok := sessionAuthByID(authID)
+				return ok && current != nil && !current.Disabled && current.Status != coreauth.StatusDisabled
+			})
+		}
 		if nativeWebsocketPassthrough && requestRequiresCurrentUpstreamWebsocket {
 			cliCtx = cliproxyexecutor.WithRequiredUpstreamWebsocket(cliCtx)
 		}
 		cliCtx = handlers.WithExecutionSessionID(cliCtx, passthroughSessionID)
 		cliCtx = handlers.WithSelectedAuthIDCallback(cliCtx, func(authID string) {
 			preserveNativeOutput.Store(false)
+			codexDuplexStream.Store(false)
 			authID = strings.TrimSpace(authID)
 			if authID == "" || h == nil || h.AuthManager == nil {
 				return
@@ -666,6 +748,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 				return
 			}
 			attemptedUpstreamMode = upstreamModeForAuth(selectedAuth)
+			codexDuplexStream.Store(duplexInput != nil && attemptedUpstreamMode == responsesWebsocketUpstreamModeWS && strings.EqualFold(strings.TrimSpace(selectedAuth.Provider), "codex"))
 			preserveNativeOutput.Store(nativeRequest && strings.EqualFold(strings.TrimSpace(selectedAuth.Provider), "codex"))
 		})
 		executionAuthID := ""
@@ -701,6 +784,7 @@ func (h *OpenAIResponsesAPIHandler) ResponsesWebsocket(c *gin.Context) {
 			passthroughSessionID,
 			responsesWebsocketForwardOptions{
 				preserveCompletionOutput: preserveNativeOutput.Load,
+				duplexStream:             codexDuplexStream.Load,
 				toolCacheTurn:            toolCacheTurn,
 				suppressError:            replayPinnedAuthFailure,
 			},
