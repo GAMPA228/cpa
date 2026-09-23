@@ -15,6 +15,7 @@ Go 1.26+ proxy server providing OpenAI/Gemini/Claude/Codex compatible APIs with 
 - Do not push backend or frontend changes unless the user explicitly asks.
 
 ## Git Workflow
+- Start each independent feature or upstream sync on a dedicated branch from the latest local main. Verify there, merge back to main, and build release packages from main. Reuse a feature branch only for the same feature.
 - After implementing and verifying a requested change, commit the task-related local changes in every affected repository unless the user explicitly asks not to commit.
 - Stage only files belonging to the completed task; preserve unrelated working-tree changes.
 - Do not push backend or frontend commits unless the user explicitly asks.
