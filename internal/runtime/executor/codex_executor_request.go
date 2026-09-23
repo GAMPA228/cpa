@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -308,12 +309,12 @@ func applyCodexHeaders(r *http.Request, auth *cliproxyauth.Auth, token string, s
 
 // applyModelHeaderOverrides applies model-specific headers while keeping the
 // canonical Codex identity authoritative when cloaking is enabled.
-func applyModelHeaderOverrides(headers http.Header, modelName string, cfg *config.Config) {
+func applyModelHeaderOverrides(headers http.Header, modelName string, cfg *config.Config, auths ...*cliproxyauth.Auth) {
 	if headers == nil {
 		return
 	}
 	overrides := registry.ModelOverrideHeaders(modelName)
-	cloakingEnabled := codexCloakingEnabled(cfg)
+	cloakingEnabled := codexCloakingEnabled(cfg, auths...)
 	for key, value := range overrides {
 		if cloakingEnabled && isCodexIdentityHeader(key) {
 			continue
@@ -323,7 +324,7 @@ func applyModelHeaderOverrides(headers http.Header, modelName string, cfg *confi
 	if strings.Contains(headers.Get("User-Agent"), "Mac OS") && codexSessionHeaderValue(headers) == "" {
 		headers.Set("Session-Id", uuid.NewString())
 	}
-	applyCodexCloakingHeaders(headers, cfg)
+	applyCodexCloakingHeaders(headers, cfg, auths...)
 }
 
 func isCodexIdentityHeader(name string) bool {
@@ -402,14 +403,31 @@ func applyCodexHeadersFromSources(r *http.Request, auth *cliproxyauth.Auth, toke
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs, ginHeaders)
-	applyCodexCloakingHeaders(r.Header, cfg)
-	if codexCloakingEnabled(cfg) {
+	applyCodexCloakingHeaders(r.Header, cfg, auth)
+	if codexCloakingEnabled(cfg, auth) {
 		r.Header.Set("OpenAI-Beta", codexResponsesBetaHeader)
 	}
 }
 
-func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config) {
-	if headers == nil || !codexCloakingEnabled(cfg) {
+func isCodexCloakingDisabled(cfg *config.Config, auth *cliproxyauth.Auth) bool {
+	if auth != nil && len(auth.Attributes) > 0 {
+		if val, ok := auth.Attributes[cliproxyauth.AttributeCodexDisableCloaking]; ok {
+			if parsed, errParse := strconv.ParseBool(strings.TrimSpace(val)); errParse == nil {
+				return parsed
+			}
+		}
+	}
+	if entry := resolveCodexKeyConfig(cfg, auth); entry != nil && entry.DisableCodexCloaking != nil {
+		return *entry.DisableCodexCloaking
+	}
+	if cfg != nil && cfg.Codex.DisableCodexCloaking {
+		return true
+	}
+	return false
+}
+
+func applyCodexCloakingHeaders(headers http.Header, cfg *config.Config, auths ...*cliproxyauth.Auth) {
+	if headers == nil || !codexCloakingEnabled(cfg, auths...) {
 		return
 	}
 	userAgent, version, originator := codexCloakingHeaderValues(cfg)
@@ -437,8 +455,12 @@ func codexCloakingHeaderValues(cfg *config.Config) (userAgent, version, originat
 	return userAgent, version, originator
 }
 
-func codexCloakingEnabled(cfg *config.Config) bool {
-	return cfg != nil && !cfg.Codex.DisableCodexCloaking
+func codexCloakingEnabled(cfg *config.Config, auths ...*cliproxyauth.Auth) bool {
+	var auth *cliproxyauth.Auth
+	if len(auths) > 0 {
+		auth = auths[0]
+	}
+	return cfg != nil && !isCodexCloakingDisabled(cfg, auth)
 }
 
 // applyCodexRoutingHintHeader mirrors the official Codex client routing hint

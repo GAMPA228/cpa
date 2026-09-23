@@ -96,7 +96,7 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 		return nil, err
 	}
 	applyCodexHeaders(httpReq, auth, apiKey, true, e.cfg, opts.Headers)
-	applyModelHeaderOverrides(httpReq.Header, baseModel, e.cfg)
+	applyModelHeaderOverrides(httpReq.Header, baseModel, e.cfg, auth)
 	applyCodexRoutingHintHeader(httpReq.Header, auth, upstreamBody)
 	applyCodexIdentityConfuseHeaders(httpReq.Header, &identityState)
 	_, turnStateRefresh, errHeaders := prepareCodexUpstreamHeaders(ctx, opts, httpReq.Header, auth, baseModel, url)

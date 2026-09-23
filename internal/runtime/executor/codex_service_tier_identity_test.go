@@ -55,6 +55,35 @@ func TestCodexFastRequestKeepsCanonicalIdentityAfterModelOverride(t *testing.T) 
 	}
 }
 
+func TestCodexPerAccountCloakingSurvivesModelHeaders(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		cfg := &config.Config{CodexHeaderDefaults: config.CodexHeaderDefaults{
+			UserAgent: "configured-agent", Version: "configured-version", Originator: "configured-origin",
+		}}
+		auth := &cliproxyauth.Auth{Attributes: map[string]string{}}
+		if disabled {
+			auth.Attributes[cliproxyauth.AttributeCodexDisableCloaking] = "true"
+		}
+		req := httptest.NewRequest(http.MethodPost, "http://upstream/responses", nil)
+		applyCodexHeaders(req, auth, "token", true, cfg)
+		if disabled {
+			req.Header.Set("User-Agent", "account-agent")
+			req.Header.Set("Version", "account-version")
+		}
+		applyModelHeaderOverrides(req.Header, "gpt-6-sol", cfg, auth)
+		wantAgent, wantVersion := "configured-agent", "configured-version"
+		if disabled {
+			wantAgent, wantVersion = "account-agent", "account-version"
+		}
+		if req.Header.Get("User-Agent") != wantAgent || req.Header.Get("Version") != wantVersion {
+			t.Fatalf("disabled=%v: model headers changed account identity: %v", disabled, req.Header)
+		}
+		if !disabled && req.Header.Get("OpenAI-Beta") != codexResponsesBetaHeader {
+			t.Fatal("enabled cloaking lost the existing beta header")
+		}
+	}
+}
+
 func TestApplyCodexRoutingHintHeaderForOAuthFastRequest(t *testing.T) {
 	auth := &cliproxyauth.Auth{
 		Provider: "codex",
