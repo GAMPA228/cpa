@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/redisqueue"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
@@ -15,7 +16,7 @@ func TestFailureDetailPersistsOnlyForFailedRequests(t *testing.T) {
 	t.Cleanup(func() { redisqueue.SetUsageStatisticsEnabled(previous) })
 	stats := newTestRequestStatistics(t)
 	now := time.Date(2026, 9, 24, 1, 6, 0, 0, time.UTC)
-	stats.Record(context.Background(), coreusage.Record{
+	stats.Record(internallogging.WithRequestID(context.Background(), "a1b2c3d4"), coreusage.Record{
 		APIKey: "key", Model: "model", RequestedAt: now, Failed: true,
 		Fail: coreusage.Failure{StatusCode: 503, Body: "utls: TLS handshake: EOF\nauthorization: Bearer secret-token\ncookie: session=secret"},
 	})
@@ -27,7 +28,7 @@ func TestFailureDetailPersistsOnlyForFailedRequests(t *testing.T) {
 	if len(page.Items) != 2 || page.Items[0].ErrorMessage != "" || page.Items[0].ErrorStatus != 0 {
 		t.Fatalf("success row retained error: %+v", page.Items)
 	}
-	if page.Items[1].ErrorStatus != 503 || page.Items[1].ErrorMessage != "utls: TLS handshake: EOF\nauthorization: \"[REDACTED]\"\ncookie: [REDACTED]" {
+	if page.Items[1].RequestID != "a1b2c3d4" || page.Items[1].ErrorStatus != 503 || page.Items[1].ErrorMessage != "utls: TLS handshake: EOF\nauthorization: \"[REDACTED]\"\ncookie: [REDACTED]" {
 		t.Fatalf("failure row lost error: %+v", page.Items[1])
 	}
 	dashboard := NewHandler(stats, nil).dashboardSnapshot(nil)

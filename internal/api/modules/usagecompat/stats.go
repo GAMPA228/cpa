@@ -76,6 +76,7 @@ type modelStats struct {
 
 // RequestDetail stores the timestamp, latency, and token usage for a single request.
 type RequestDetail struct {
+	RequestID       string     `json:"request_id,omitempty"`
 	TurnStateLength *int       `json:"turn_state_length"`
 	ResponseModel   string     `json:"response_model,omitempty"`
 	CaptureID       string     `json:"capture_id,omitempty"`
@@ -150,6 +151,7 @@ type MergeResult struct {
 
 // UsageDetailRow is a paginated request detail with its API and model identifiers.
 type UsageDetailRow struct {
+	RequestID       string     `json:"request_id,omitempty"`
 	TurnStateLength *int       `json:"turn_state_length"`
 	ResponseModel   string     `json:"response_model,omitempty"`
 	CaptureID       string     `json:"capture_id,omitempty"`
@@ -381,6 +383,7 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 	hourKey := timestamp.Hour()
 
 	requestDetail := RequestDetail{
+		RequestID:       internallogging.GetRequestID(ctx),
 		TurnStateLength: normalizedTurnStateLength(record.TurnStateLength),
 		ResponseModel:   normalizedResponseModel(record),
 		Timestamp:       timestamp,
@@ -814,6 +817,7 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 }
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
+	detail.RequestID = strings.TrimSpace(detail.RequestID)
 	if !detail.Failed {
 		detail.ErrorStatus = 0
 		detail.ErrorMessage = ""

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -83,6 +84,17 @@ func (h *Handler) GetLogs(c *gin.Context) {
 
 	cutoff := parseCutoff(c.Query("after"))
 	before := parseCutoff(c.Query("before"))
+	requestID := strings.TrimSpace(c.Query("request_id"))
+	if requestID != "" {
+		if len(requestID) != 8 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request ID"})
+			return
+		}
+		if _, errDecode := hex.DecodeString(requestID); errDecode != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request ID"})
+			return
+		}
+	}
 	if strings.TrimSpace(c.Query("before")) != "" && before == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid before timestamp"})
 		return
@@ -91,8 +103,8 @@ func (h *Handler) GetLogs(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "after must be earlier than before"})
 		return
 	}
-	if before > 0 && rawCursor != "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "cursor cannot be combined with before"})
+	if (before > 0 || requestID != "") && rawCursor != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cursor cannot be combined with filters"})
 		return
 	}
 	if rawCursor != "" {
@@ -114,7 +126,7 @@ func (h *Handler) GetLogs(c *gin.Context) {
 		return
 	}
 
-	if cutoff == 0 && before == 0 && limit > 0 {
+	if cutoff == 0 && before == 0 && requestID == "" && limit > 0 {
 		result, errTail := tailLogFiles(files, limit, 0)
 		if errTail != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to read log files: %v", errTail)})
@@ -126,6 +138,10 @@ func (h *Handler) GetLogs(c *gin.Context) {
 
 	acc := newLogAccumulator(cutoff, limit)
 	acc.before = before
+	acc.requestID = requestID
+	if requestID != "" {
+		acc.include = false
+	}
 	for i := range files {
 		if errProcess := acc.consumeFile(files[i]); errProcess != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to read log file: %v", errProcess)})
@@ -459,13 +475,14 @@ func (h *Handler) collectLogFiles(dir string) ([]string, error) {
 }
 
 type logAccumulator struct {
-	cutoff  int64
-	before  int64
-	limit   int
-	lines   []string
-	total   int
-	latest  int64
-	include bool
+	cutoff    int64
+	before    int64
+	requestID string
+	limit     int
+	lines     []string
+	total     int
+	latest    int64
+	include   bool
 }
 
 func newLogAccumulator(cutoff int64, limit int) *logAccumulator {
@@ -513,7 +530,8 @@ func (acc *logAccumulator) addLine(raw string) {
 		acc.latest = ts
 	}
 	if ts > 0 {
-		acc.include = (acc.cutoff == 0 || ts > acc.cutoff) && (acc.before == 0 || ts <= acc.before)
+		acc.include = (acc.cutoff == 0 || ts > acc.cutoff) && (acc.before == 0 || ts <= acc.before) &&
+			(acc.requestID == "" || strings.Contains(line, "["+acc.requestID+"]"))
 		if acc.include {
 			acc.append(line)
 		}

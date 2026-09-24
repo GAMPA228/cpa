@@ -256,6 +256,29 @@ func TestGetLogsRejectsInvalidTimeRange(t *testing.T) {
 	}
 }
 
+func TestGetLogsFiltersAllLinesForRequestID(t *testing.T) {
+	dir := t.TempDir()
+	writeMainLog(t, dir, strings.Join([]string{
+		"[2026-06-15 10:00:00] [a1b2c3d4] first retry failed",
+		"[2026-06-15 10:00:01] [eeeeeeee] unrelated request",
+		"[2026-06-15 10:00:02] [a1b2c3d4] second retry failed",
+		"continued diagnostic",
+	}, "\n")+"\n")
+	resp := performGetLogs(t, newLogsTestHandler(dir, true), "/v0/management/logs?request_id=a1b2c3d4&limit=20")
+	want := []string{
+		"[2026-06-15 10:00:00] [a1b2c3d4] first retry failed",
+		"[2026-06-15 10:00:02] [a1b2c3d4] second retry failed",
+		"continued diagnostic",
+	}
+	if !reflect.DeepEqual(resp.Lines, want) {
+		t.Fatalf("lines = %#v, want %#v", resp.Lines, want)
+	}
+	status, _ := performGetLogsRaw(t, newLogsTestHandler(dir, true), "/v0/management/logs?request_id=not-valid")
+	if status != http.StatusBadRequest {
+		t.Fatalf("invalid request ID status = %d, want 400", status)
+	}
+}
+
 func TestGetLogsCursorReturnsOnlyNewCompleteLines(t *testing.T) {
 	dir := t.TempDir()
 	lines := []string{
