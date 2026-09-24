@@ -21,6 +21,7 @@ var (
 	sensitiveLogAssignmentPattern = regexp.MustCompile(`(?i)(["']?(?:access[\s_-]*token|refresh[\s_-]*token|id[\s_-]*token|api[\s_-]*key|client[\s_-]*secret|private[\s_-]*key|proxy[\s_-]*authorization|authorization|password|credential|token|secret)["']?\s*[:=]\s*)(?:(?:bearer|basic)\s+[^\s,;]+|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s,;&}\]]+)`)
 	authorizationLogPattern       = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
 	urlUserinfoLogPattern         = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^/\s@]+@`)
+	cookieLogPattern              = regexp.MustCompile(`(?i)(\b(?:set-cookie|cookie)\s*[:=]\s*)[^\r\n]+`)
 	diagnosticStatusPattern       = regexp.MustCompile(`(?i)\bstatus(?:\s+code)?\s*[:=]?\s*([1-5][0-9]{2})\b`)
 )
 
@@ -44,6 +45,15 @@ func SafeDiagnosticForLog(message string) string {
 	excerpt = authorizationLogPattern.ReplaceAllString(excerpt, `${1} [REDACTED]`)
 
 	return truncateDiagnosticLogExcerpt(excerpt, sourceTruncated)
+}
+
+// RedactDiagnostic retains the diagnostic text while masking credential values.
+// Callers must bound the input before persisting it.
+func RedactDiagnostic(message string) string {
+	message = urlUserinfoLogPattern.ReplaceAllString(message, `${1}[REDACTED]@`)
+	message = sensitiveLogAssignmentPattern.ReplaceAllString(message, `${1}"[REDACTED]"`)
+	message = cookieLogPattern.ReplaceAllString(message, `${1}[REDACTED]`)
+	return authorizationLogPattern.ReplaceAllString(message, `${1} [REDACTED]`)
 }
 
 // SafeErrorDiagnostic extracts only allowlisted failure signals from an

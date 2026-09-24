@@ -82,6 +82,19 @@ func (h *Handler) GetLogs(c *gin.Context) {
 	}
 
 	cutoff := parseCutoff(c.Query("after"))
+	before := parseCutoff(c.Query("before"))
+	if strings.TrimSpace(c.Query("before")) != "" && before == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid before timestamp"})
+		return
+	}
+	if before > 0 && cutoff >= before {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "after must be earlier than before"})
+		return
+	}
+	if before > 0 && rawCursor != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cursor cannot be combined with before"})
+		return
+	}
 	if rawCursor != "" {
 		result, reset, errCursor := readLogFilesFromCursor(logDir, files, rawCursor, limit)
 		if errCursor != nil {
@@ -101,7 +114,7 @@ func (h *Handler) GetLogs(c *gin.Context) {
 		return
 	}
 
-	if cutoff == 0 && limit > 0 {
+	if cutoff == 0 && before == 0 && limit > 0 {
 		result, errTail := tailLogFiles(files, limit, 0)
 		if errTail != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to read log files: %v", errTail)})
@@ -112,6 +125,7 @@ func (h *Handler) GetLogs(c *gin.Context) {
 	}
 
 	acc := newLogAccumulator(cutoff, limit)
+	acc.before = before
 	for i := range files {
 		if errProcess := acc.consumeFile(files[i]); errProcess != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to read log file: %v", errProcess)})
@@ -446,6 +460,7 @@ func (h *Handler) collectLogFiles(dir string) ([]string, error) {
 
 type logAccumulator struct {
 	cutoff  int64
+	before  int64
 	limit   int
 	lines   []string
 	total   int
@@ -459,9 +474,10 @@ func newLogAccumulator(cutoff int64, limit int) *logAccumulator {
 		capacity = limit
 	}
 	return &logAccumulator{
-		cutoff: cutoff,
-		limit:  limit,
-		lines:  make([]string, 0, capacity),
+		cutoff:  cutoff,
+		limit:   limit,
+		lines:   make([]string, 0, capacity),
+		include: cutoff == 0,
 	}
 }
 
@@ -497,13 +513,13 @@ func (acc *logAccumulator) addLine(raw string) {
 		acc.latest = ts
 	}
 	if ts > 0 {
-		acc.include = acc.cutoff == 0 || ts > acc.cutoff
-		if acc.cutoff == 0 || acc.include {
+		acc.include = (acc.cutoff == 0 || ts > acc.cutoff) && (acc.before == 0 || ts <= acc.before)
+		if acc.include {
 			acc.append(line)
 		}
 		return
 	}
-	if acc.cutoff == 0 || acc.include {
+	if acc.include {
 		acc.append(line)
 	}
 }

@@ -328,7 +328,18 @@ func (h *Handler) dashboardSnapshot(c *gin.Context) StatisticsSnapshot {
 	if c != nil {
 		options.DetailLimit = parseDetailLimit(c, options.DetailLimit)
 	}
-	return h.snapshotWithOptions(options)
+	snapshot := h.snapshotWithOptions(options)
+	for apiName, api := range snapshot.APIs {
+		for modelName, model := range api.Models {
+			for i := range model.Details {
+				model.Details[i].ErrorStatus = 0
+				model.Details[i].ErrorMessage = ""
+			}
+			api.Models[modelName] = model
+		}
+		snapshot.APIs[apiName] = api
+	}
+	return snapshot
 }
 
 func (h *Handler) summarySnapshot() StatisticsSnapshot {

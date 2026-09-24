@@ -96,6 +96,8 @@ type RequestDetail struct {
 	ResponseTier    string     `json:"response_service_tier,omitempty"`
 	Tokens          TokenStats `json:"tokens"`
 	Failed          bool       `json:"failed"`
+	ErrorStatus     int        `json:"error_status,omitempty"`
+	ErrorMessage    string     `json:"error_message,omitempty"`
 }
 
 // TokenStats captures the token usage breakdown for a request.
@@ -171,6 +173,8 @@ type UsageDetailRow struct {
 	ResponseTier    string     `json:"response_service_tier,omitempty"`
 	Tokens          TokenStats `json:"tokens"`
 	Failed          bool       `json:"failed"`
+	ErrorStatus     int        `json:"error_status,omitempty"`
+	ErrorMessage    string     `json:"error_message,omitempty"`
 }
 
 // DetailPageQuery describes a paginated detail lookup.
@@ -397,6 +401,10 @@ func (s *RequestStatistics) Record(ctx context.Context, record coreusage.Record)
 		ResponseTier:    normalizedResponseServiceTier(record),
 		Tokens:          detail,
 		Failed:          failed,
+	}
+	if failed {
+		requestDetail.ErrorStatus = record.Fail.StatusCode
+		requestDetail.ErrorMessage = strings.TrimSpace(record.Fail.Body)
 	}
 
 	s.mu.Lock()
@@ -806,6 +814,19 @@ func (s *RequestStatistics) loadDetailsFromStore() error {
 }
 
 func normalizeRequestDetail(detail RequestDetail) RequestDetail {
+	if !detail.Failed {
+		detail.ErrorStatus = 0
+		detail.ErrorMessage = ""
+	} else {
+		detail.ErrorMessage = strings.TrimSpace(detail.ErrorMessage)
+		if len(detail.ErrorMessage) > 128*1024 {
+			detail.ErrorMessage = strings.ToValidUTF8(detail.ErrorMessage[:128*1024], "")
+		}
+		detail.ErrorMessage = internallogging.RedactDiagnostic(detail.ErrorMessage)
+		if len(detail.ErrorMessage) > 64*1024 {
+			detail.ErrorMessage = strings.ToValidUTF8(detail.ErrorMessage[:64*1024], "") + "\n[error truncated at 64 KiB]"
+		}
+	}
 	detail.TurnStateLength = normalizedTurnStateLength(detail.TurnStateLength)
 	detail.ResponseModel = strings.TrimSpace(detail.ResponseModel)
 	if detail.FirstTokenMs != nil {

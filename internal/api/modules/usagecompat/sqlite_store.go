@@ -95,6 +95,8 @@ func (s *sqliteDetailStore) init() error {
 			cached_tokens INTEGER NOT NULL,
 			total_tokens INTEGER NOT NULL,
 			failed INTEGER NOT NULL,
+			error_status INTEGER NOT NULL DEFAULT 0,
+			error_message TEXT NOT NULL DEFAULT '',
 			dedup_key TEXT NOT NULL UNIQUE
 		)`,
 		`ALTER TABLE usage_details ADD COLUMN reasoning_effort TEXT NOT NULL DEFAULT ''`,
@@ -111,6 +113,8 @@ func (s *sqliteDetailStore) init() error {
 		`ALTER TABLE usage_details ADD COLUMN service_tier TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN applied_service_tier TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE usage_details ADD COLUMN response_service_tier TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE usage_details ADD COLUMN error_status INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE usage_details ADD COLUMN error_message TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS usage_details_api_model_time_idx ON usage_details(api_name, model_name, timestamp_ns DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS usage_details_time_idx ON usage_details(timestamp_ns DESC, id DESC)`,
 		`CREATE INDEX IF NOT EXISTS usage_details_failed_time_idx ON usage_details(failed, timestamp_ns DESC, id DESC)`,
@@ -142,8 +146,8 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
 			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens,
-			failed, dedup_key, response_model, turn_state_length
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			failed, dedup_key, response_model, turn_state_length, error_status, error_message
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		apiName,
 		modelName,
 		detail.Timestamp.UTC().UnixNano(),
@@ -171,6 +175,8 @@ func (s *sqliteDetailStore) Insert(apiName, modelName string, detail RequestDeta
 		dedupKey(apiName, modelName, detail),
 		detail.ResponseModel,
 		detail.TurnStateLength,
+		detail.ErrorStatus,
+		detail.ErrorMessage,
 	)
 	if err != nil {
 		if isSQLiteDuplicate(err) {
@@ -257,7 +263,7 @@ func (s *sqliteDetailStore) ForEach(fn func(apiName, modelName string, detail Re
 		`SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, capture_id, client_ip, source, auth_id, auth_index,
 			proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 			service_tier, applied_service_tier, response_service_tier,
-			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model, turn_state_length
+			input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model, turn_state_length, error_status, error_message
 		FROM usage_details
 		ORDER BY timestamp_ns ASC, id ASC`,
 	)
@@ -421,7 +427,7 @@ func (s *sqliteDetailStore) queryDetails(query DetailPageQuery, limit, offset in
 	sqlQuery := `SELECT id, api_name, model_name, timestamp_ns, latency_ms, first_token_ms, capture_id, client_ip, source, auth_id, auth_index,
 		proxy_mode, proxy_source, proxy_protocol, proxy_endpoint, reasoning_effort,
 		service_tier, applied_service_tier, response_service_tier,
-		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model, turn_state_length
+		input_tokens, output_tokens, reasoning_tokens, cached_tokens, total_tokens, failed, response_model, turn_state_length, error_status, error_message
 		FROM usage_details ` + where + " " + order
 	if limit >= 0 {
 		sqlQuery += " LIMIT ? OFFSET ?"
@@ -573,6 +579,8 @@ func scanDetailRow(rows interface {
 		&failed,
 		&row.ResponseModel,
 		&row.TurnStateLength,
+		&row.ErrorStatus,
+		&row.ErrorMessage,
 	)
 	if err != nil {
 		return row, err
@@ -613,6 +621,8 @@ func detailFromRow(row UsageDetailRow) RequestDetail {
 		ResponseTier:    row.ResponseTier,
 		Tokens:          row.Tokens,
 		Failed:          row.Failed,
+		ErrorStatus:     row.ErrorStatus,
+		ErrorMessage:    row.ErrorMessage,
 	}
 }
 
@@ -642,6 +652,8 @@ func detailRowFromDetail(id int64, apiName, modelName string, detail RequestDeta
 		ResponseTier:    detail.ResponseTier,
 		Tokens:          detail.Tokens,
 		Failed:          detail.Failed,
+		ErrorStatus:     detail.ErrorStatus,
+		ErrorMessage:    detail.ErrorMessage,
 	}
 }
 

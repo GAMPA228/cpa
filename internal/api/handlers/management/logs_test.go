@@ -3,6 +3,7 @@ package management
 import (
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -223,6 +224,35 @@ func TestGetLogsAfterKeepsTimestampScanAndReturnsCursor(t *testing.T) {
 	}
 	if resp.NextCursor == "" {
 		t.Fatal("next-cursor is empty")
+	}
+}
+
+func TestGetLogsTimeRangeIncludesContinuationLines(t *testing.T) {
+	dir := t.TempDir()
+	writeMainLog(t, dir, strings.Join([]string{
+		"[2026-06-15 10:00:00] before",
+		"[2026-06-15 10:00:01] first",
+		"continued first",
+		"[2026-06-15 10:00:02] second",
+		"[2026-06-15 10:00:03] after",
+	}, "\n")+"\n")
+	start := time.Date(2026, 6, 15, 10, 0, 0, 0, time.Local).Unix()
+	end := time.Date(2026, 6, 15, 10, 0, 2, 0, time.Local).Unix()
+	resp := performGetLogs(t, newLogsTestHandler(dir, true), fmt.Sprintf("/v0/management/logs?after=%d&before=%d&limit=10", start, end))
+	want := []string{"[2026-06-15 10:00:01] first", "continued first", "[2026-06-15 10:00:02] second"}
+	if !reflect.DeepEqual(resp.Lines, want) {
+		t.Fatalf("lines = %#v, want %#v", resp.Lines, want)
+	}
+}
+
+func TestGetLogsRejectsInvalidTimeRange(t *testing.T) {
+	dir := t.TempDir()
+	writeMainLog(t, dir, "[2026-06-15 10:00:00] entry\n")
+	for _, query := range []string{"before=invalid", "after=20&before=10", "cursor=abc&before=10"} {
+		status, _ := performGetLogsRaw(t, newLogsTestHandler(dir, true), "/v0/management/logs?"+query)
+		if status != http.StatusBadRequest {
+			t.Fatalf("query %q status = %d, want 400", query, status)
+		}
 	}
 }
 
