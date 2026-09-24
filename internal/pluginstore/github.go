@@ -122,6 +122,11 @@ func ReleaseVersion(release Release) (string, error) {
 }
 
 func (c Client) DownloadAsset(ctx context.Context, asset ReleaseAsset) ([]byte, error) {
+	return c.DownloadAssetWithLimit(ctx, asset, 0)
+}
+
+// DownloadAssetWithLimit bounds downloads used for manually installed plugins.
+func (c Client) DownloadAssetWithLimit(ctx context.Context, asset ReleaseAsset, maxBytes int64) ([]byte, error) {
 	downloadURL := strings.TrimSpace(asset.BrowserDownloadURL)
 	apiURL := strings.TrimSpace(asset.APIURL)
 	if downloadURL == "" || c.releaseAssetAPIAuthenticated(apiURL) {
@@ -132,7 +137,7 @@ func (c Client) DownloadAsset(ctx context.Context, asset ReleaseAsset) ([]byte, 
 	if downloadURL == "" {
 		return nil, fmt.Errorf("asset %q missing download url", asset.Name)
 	}
-	return c.get(ctx, downloadURL, "application/octet-stream", RequestKindArtifact, 0)
+	return c.get(ctx, downloadURL, "application/octet-stream", RequestKindArtifact, maxBytes)
 }
 
 func (c Client) releaseAssetAPIAuthenticated(apiURL string) bool {

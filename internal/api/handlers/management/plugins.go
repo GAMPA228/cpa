@@ -29,6 +29,7 @@ type pluginListEntry struct {
 	ID               string                  `json:"id"`
 	Path             string                  `json:"path"`
 	Configured       bool                    `json:"configured"`
+	StoreManaged     bool                    `json:"store_managed"`
 	Registered       bool                    `json:"registered"`
 	Enabled          bool                    `json:"enabled"`
 	EffectiveEnabled bool                    `json:"effective_enabled"`
@@ -110,6 +111,7 @@ func (h *Handler) ListPlugins(c *gin.Context) {
 		entry := entries[id]
 		entry.ID = htmlsanitize.String(id)
 		entry.Configured = true
+		_, _, entry.StoreManaged = pluginStoreConfiguredSource(item)
 		entry.Enabled = pluginInstanceEnabled(item)
 		if entry.ConfigFields == nil {
 			entry.ConfigFields = []pluginConfigFieldInfo{}

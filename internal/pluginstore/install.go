@@ -307,6 +307,42 @@ func InstallArchive(archiveData []byte, plugin Plugin, options InstallOptions) (
 	}, nil
 }
 
+// InstallLibrary writes a verified standalone release library to a versioned
+// path. The caller must verify the release checksum before calling it.
+func InstallLibrary(data []byte, id, version string, options InstallOptions) (InstallResult, error) {
+	options = normalizeInstallOptions(options)
+	id = strings.TrimSpace(id)
+	version = normalizeVersion(version)
+	if !validPluginID(id) || !validPluginVersion(version) || len(data) == 0 {
+		return InstallResult{}, fmt.Errorf("invalid standalone plugin library")
+	}
+	targetPath, errTarget := installTargetPath(options, id, version)
+	if errTarget != nil {
+		return InstallResult{}, errTarget
+	}
+	overwrote := false
+	if existing, errRead := os.ReadFile(targetPath); errRead == nil {
+		overwrote = true
+		if bytes.Equal(existing, data) {
+			return InstallResult{ID: id, Version: version, Path: targetPath, Overwritten: true, Skipped: true}, nil
+		}
+	} else if !errors.Is(errRead, os.ErrNotExist) {
+		return InstallResult{}, fmt.Errorf("read target plugin: %w", errRead)
+	}
+	if overwrote && options.BeforeWrite != nil {
+		if errBeforeWrite := options.BeforeWrite(); errBeforeWrite != nil {
+			return InstallResult{}, fmt.Errorf("prepare plugin write: %w", errBeforeWrite)
+		}
+	}
+	if overwrote && loadedPluginInstallBlocked(options) {
+		return InstallResult{}, ErrLoadedPluginLocked
+	}
+	if errWrite := writeFileAtomic(targetPath, data, 0o755); errWrite != nil {
+		return InstallResult{}, errWrite
+	}
+	return InstallResult{ID: id, Version: version, Path: targetPath, Overwritten: overwrote}, nil
+}
+
 func installTargetPath(options InstallOptions, id string, version string) (string, error) {
 	version = normalizeVersion(version)
 	if !validPluginVersion(version) {
