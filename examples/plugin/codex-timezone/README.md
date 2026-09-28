@@ -13,9 +13,11 @@ provided SHA-256 checksum, then place the `.so` in the configured plugin directo
 by copying a file, restart CPA to discover it; do not replace a loaded library in
 place. Existing plugin entries and configuration must be preserved.
 
-Version 0.1.1 supports automatic login from the updated management frontend.
-Deploy the accompanying `management.html` to use it; the host binary and YAML do
-not change. The trusted same-origin iframe exchanges a nonce-bound handshake with
+Version 0.1.2 changes only the plugin's timezone picker. Replace the library while
+CPA is stopped, restart CPA, and refresh the browser. Existing rules are preserved.
+The management frontend shipped with v0.1.1 continues to support automatic login;
+this release does not include or require another frontend update. The host binary
+and YAML do not change. The trusted same-origin iframe exchanges a nonce-bound handshake with
 its parent. Both sides check the origin and source window; the parent also checks
 the exact panel URL and an explicit plugin allowlist. No other plugin receives keys.
 Older management pages and standalone tabs retain the **management key** input.
@@ -36,6 +38,12 @@ the Plugins page; do not create a second top-level `plugins` section in YAML.
 - Manual: use a validated IANA timezone.
 - Automatic: look up the outgoing IP's timezone through `https://ipwho.is/`.
 - Account rules override the default. Inherit follows the default.
+
+The manual picker opens the complete browser timezone catalog, marks the current
+selection, and provides a separate search field and scrollable list. Reopening
+clears the search without changing the selected value. Valid browser-recognized
+IANA aliases can also be entered in the search and selected; the backend remains
+the final validator. Both default and per-account rules use the same picker.
 
 For automatic mode, a Codex OAuth account's physical auth JSON `proxy_url` wins;
 `direct`/`none` bypasses proxies. Otherwise the host's `host.http.do` callback uses

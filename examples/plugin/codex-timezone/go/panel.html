@@ -115,7 +115,67 @@
         align-items: center;
       }
       .zone {
-        width: 195px;
+        width: 240px;
+        cursor: pointer;
+        padding-right: 28px;
+        text-overflow: ellipsis;
+      }
+      .zone-picker {
+        display: inline-block;
+        position: relative;
+        max-width: 100%;
+      }
+      .zone-picker::after {
+        content: "\25BE";
+        position: absolute;
+        right: 10px;
+        top: 7px;
+        pointer-events: none;
+        color: var(--muted);
+      }
+      .zone-popup {
+        position: fixed;
+        inset: auto;
+        z-index: 1000;
+        margin: 0;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--text);
+        box-shadow: 0 6px 20px #0002;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      #zone-search {
+        width: 100%;
+        flex-shrink: 0;
+      }
+      #zone-options {
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        min-height: 0;
+      }
+      .zone-option {
+        min-height: 36px;
+        padding: 8px 28px 8px 8px;
+        border-radius: 4px;
+        overflow-wrap: anywhere;
+        position: relative;
+        cursor: pointer;
+      }
+      .zone-option.active {
+        background: var(--soft);
+      }
+      .zone-option[aria-selected="true"] {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .zone-option[aria-selected="true"]::after {
+        content: "\2713";
+        position: absolute;
+        right: 8px;
       }
       .section-head {
         display: flex;
@@ -298,14 +358,13 @@
             <option value="keep">保持原样</option>
             <option value="manual">指定时区</option>
             <option value="auto">按出口 IP</option></select
-          ><input
-            id="default-zone"
-            class="zone"
-            list="zones"
-            aria-label="默认时区"
-            value="Asia/Singapore"
-            hidden
-          />
+          ><span class="zone-picker" id="default-picker" hidden
+            ><input
+              id="default-zone"
+              class="zone"
+              aria-label="默认时区"
+              value="Asia/Singapore"
+          /></span>
         </div>
       </section>
       <div id="notice" role="status" aria-live="polite"></div>
@@ -344,7 +403,21 @@
       </section>
       <footer><span id="activity"></span></footer>
     </main>
-    <datalist id="zones"></datalist>
+    <div id="zone-popup" class="zone-popup" popover="manual" hidden>
+      <input
+        id="zone-search"
+        type="search"
+        aria-label="搜索时区"
+        placeholder="搜索时区"
+        autocomplete="off"
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded="true"
+        aria-controls="zone-options"
+      />
+      <div id="zone-options" role="listbox" aria-label="时区"></div>
+      <div id="zone-empty" class="sub" role="status" hidden>没有匹配的时区</div>
+    </div>
     <script>
       "use strict";
       const api = "/v0/management/plugins/codex-timezone",
@@ -370,11 +443,173 @@
               "Europe/London",
             ]),
       ];
-      for (const value of [...new Set(zones)].sort()) {
-        const option = document.createElement("option");
-        option.value = value;
-        $("zones").append(option);
+      const zoneChoices = [...new Set(zones)].sort();
+      let zoneTarget = null,
+        zoneMatches = [],
+        zoneActive = -1;
+      function closeZones(restoreFocus = false) {
+        const target = zoneTarget;
+        zoneTarget = null;
+        const popup = $("zone-popup");
+        if (popup.hidePopover && popup.matches(":popover-open"))
+          popup.hidePopover();
+        popup.hidden = true;
+        $("zone-search").removeAttribute("aria-activedescendant");
+        if (target) {
+          target.setAttribute("aria-expanded", "false");
+          if (restoreFocus && target.isConnected) target.focus();
+        }
       }
+      function positionZones() {
+        if (!zoneTarget) return;
+        const rect = zoneTarget.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const left = viewport?.offsetLeft || 0,
+          top = viewport?.offsetTop || 0;
+        const width = viewport?.width || innerWidth,
+          height = viewport?.height || innerHeight;
+        const below = top + height - rect.bottom - 12,
+          above = rect.top - top - 12;
+        const down = below >= Math.min(310, above);
+        const popup = $("zone-popup");
+        const popupWidth = Math.min(Math.max(rect.width, 300), width - 16);
+        const popupHeight = Math.min(350, Math.max(0, down ? below : above));
+        popup.style.width = popupWidth + "px";
+        popup.style.height = popupHeight + "px";
+        popup.style.left =
+          Math.max(
+            left + 8,
+            Math.min(rect.left, left + width - popupWidth - 8),
+          ) + "px";
+        popup.style.top =
+          (down ? rect.bottom + 4 : rect.top - popupHeight - 4) + "px";
+      }
+      function highlightZone(index, scroll = true) {
+        zoneActive = index;
+        const options = $("zone-options").children;
+        for (let i = 0; i < options.length; i++)
+          options[i].classList.toggle("active", i === index);
+        const active = options[index];
+        if (active) {
+          $("zone-search").setAttribute("aria-activedescendant", active.id);
+          if (scroll) active.scrollIntoView({ block: "nearest" });
+        } else $("zone-search").removeAttribute("aria-activedescendant");
+      }
+      function selectZone(index) {
+        if (!zoneTarget || !zoneMatches[index]) return;
+        zoneTarget.value = zoneMatches[index];
+        zoneTarget.title = zoneTarget.value;
+        zoneTarget.dispatchEvent(new Event("change", { bubbles: true }));
+        closeZones(true);
+      }
+      function searchZones() {
+        if (!zoneTarget) return;
+        const query = $("zone-search").value.trim();
+        const choices = [...new Set([...zoneChoices, zoneTarget.value])]
+          .filter(Boolean)
+          .sort();
+        zoneMatches = choices.filter((zone) =>
+          zone.toLowerCase().includes(query.toLowerCase()),
+        );
+        // Preserve valid aliases and legacy-browser zones absent from the suggestion catalog.
+        if (
+          query &&
+          !choices.some((zone) => zone.toLowerCase() === query.toLowerCase())
+        ) {
+          try {
+            new Intl.DateTimeFormat("en", { timeZone: query });
+            zoneMatches.push(query);
+          } catch {
+            /* Invalid identifiers are not offered. */
+          }
+        }
+        $("zone-options").replaceChildren();
+        zoneMatches.forEach((zone, index) => {
+          const option = node("div", zone, "zone-option");
+          option.id = "zone-option-" + index;
+          option.setAttribute("role", "option");
+          option.setAttribute(
+            "aria-selected",
+            String(zone === zoneTarget.value),
+          );
+          option.onpointermove = () => highlightZone(index, false);
+          option.onclick = () => selectZone(index);
+          $("zone-options").append(option);
+        });
+        $("zone-empty").hidden = zoneMatches.length !== 0;
+        const selected = query ? -1 : zoneMatches.indexOf(zoneTarget.value);
+        highlightZone(selected >= 0 ? selected : zoneMatches.length ? 0 : -1);
+      }
+      function openZones(input) {
+        if (zoneTarget === input) return closeZones(true);
+        closeZones();
+        zoneTarget = input;
+        input.setAttribute("aria-expanded", "true");
+        $("zone-search").value = "";
+        $("zone-popup").hidden = false;
+        if ($("zone-popup").showPopover) $("zone-popup").showPopover();
+        positionZones();
+        searchZones();
+        $("zone-search").focus({ preventScroll: true });
+      }
+      function bindZone(input) {
+        input.readOnly = true;
+        input.setAttribute("role", "combobox");
+        input.setAttribute("aria-haspopup", "listbox");
+        input.setAttribute("aria-expanded", "false");
+        input.setAttribute("aria-controls", "zone-options");
+        input.onclick = () => openZones(input);
+        input.onkeydown = (event) => {
+          if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+            event.preventDefault();
+            openZones(input);
+          }
+        };
+      }
+      bindZone($("default-zone"));
+      $("zone-search").oninput = searchZones;
+      $("zone-search").onkeydown = (event) => {
+        if (["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key))
+          event.preventDefault();
+        if (event.key === "Escape" || event.key === "Tab") closeZones(true);
+        else if (event.key === "Enter") selectZone(zoneActive);
+        else if (
+          zoneMatches.length &&
+          ["ArrowDown", "ArrowUp"].includes(event.key)
+        )
+          highlightZone(
+            (zoneActive +
+              (event.key === "ArrowDown" ? 1 : -1) +
+              zoneMatches.length) %
+              zoneMatches.length,
+          );
+      };
+      document.addEventListener("pointerdown", (event) => {
+        if (
+          zoneTarget &&
+          event.target !== zoneTarget &&
+          !$("zone-popup").contains(event.target)
+        )
+          closeZones();
+      });
+      document.addEventListener("focusin", (event) => {
+        if (
+          zoneTarget &&
+          event.target !== zoneTarget &&
+          !$("zone-popup").contains(event.target)
+        )
+          closeZones();
+      });
+      window.addEventListener("resize", positionZones);
+      window.visualViewport?.addEventListener("resize", positionZones);
+      window.visualViewport?.addEventListener("scroll", positionZones);
+      document.addEventListener(
+        "scroll",
+        (event) => {
+          if (!$("zone-popup").contains(event.target)) positionZones();
+        },
+        true,
+      );
       function message(text, error = false) {
         $("notice").textContent = text;
         $("notice").className = error ? "error" : "";
@@ -441,12 +676,14 @@
           cells[4].append(node("div", "保留上次结果", "sub"));
       }
       function render(data) {
+        closeZones();
         snapshot = data;
         $("enabled").checked = data.settings.enabled;
         $("default-mode").value = data.settings.default.mode;
         $("default-zone").value =
           data.settings.default.timezone || "Asia/Singapore";
-        $("default-zone").hidden = $("default-mode").value !== "manual";
+        $("default-zone").title = $("default-zone").value;
+        $("default-picker").hidden = $("default-mode").value !== "manual";
         $("version").textContent = "v" + data.version;
         $("count").textContent = "(" + data.accounts.length + ")";
         $("rows").replaceChildren();
@@ -483,17 +720,21 @@
           mode.value = rule.mode;
           const zone = document.createElement("input");
           zone.className = "zone";
-          zone.setAttribute("list", "zones");
           zone.setAttribute(
             "aria-label",
             (account.label || account.name) + " 指定时区",
           );
           zone.value = rule.timezone || "Asia/Singapore";
-          zone.hidden = mode.value !== "manual";
+          zone.title = zone.value;
+          bindZone(zone);
+          const picker = node("span", undefined, "zone-picker");
+          picker.append(zone);
+          picker.hidden = mode.value !== "manual";
           mode.onchange = () => {
-            zone.hidden = mode.value !== "manual";
+            closeZones();
+            picker.hidden = mode.value !== "manual";
           };
-          control.append(mode, zone);
+          control.append(mode, picker);
           tr.append(name, control, node("td"), node("td"), node("td"));
           fillStatus(tr, account);
           $("rows").append(tr);
@@ -579,6 +820,7 @@
         pendingNonce = "";
       }
       function disconnect() {
+        closeZones();
         authEpoch++;
         stopHandshake();
         clearInterval(timer);
@@ -661,7 +903,8 @@
         void connect($("key").value.trim());
       };
       $("default-mode").onchange = () => {
-        $("default-zone").hidden = $("default-mode").value !== "manual";
+        closeZones();
+        $("default-picker").hidden = $("default-mode").value !== "manual";
       };
       $("search").oninput = filter;
       $("save").onclick = () =>

@@ -62,3 +62,14 @@ node examples/plugin/codex-timezone/browser-smoke.mjs <playwright/index.mjs> <sc
 Automatic login is restricted to the trusted same-origin `codex-timezone` panel.
 It intentionally does not send credentials to arbitrary third-party plugins.
 Standalone tabs and old frontend builds still require manual authentication.
+
+## Version 0.1.2 Picker
+
+Only the plugin page, version and related docs/tests change. No management frontend
+or host code changes. The shared default/account picker uses a separate search
+input, full scrollable catalog, selected-item marker and a body-level popover to
+avoid clipping inside the account table. Browser tests cover full-list reopening,
+search, Enter/Escape/Tab, outside click, empty results, valid aliases, persisted
+account values and light/dark desktop/narrow screenshots. Existing authentication
+tests continue to use the v0.1.1 management build. Linux race/ABI tests and the real
+v4.0.24 host smoke test verify the final plugin library.
