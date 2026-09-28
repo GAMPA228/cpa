@@ -17,7 +17,7 @@ import (
 )
 
 const pluginID = "codex-timezone"
-const version = "0.1.1"
+const version = "0.1.2"
 
 type rule struct {
 	Mode     string `json:"mode"`
