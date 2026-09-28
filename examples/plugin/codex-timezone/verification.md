@@ -2,8 +2,10 @@
 
 ## Scope
 
-Only `examples/plugin/codex-timezone/` is added. No host API, executor, frontend
-management application, production config, auth files, or existing plugins change.
+The plugin lives in `examples/plugin/codex-timezone/`. No host API, executor,
+production config, auth files, or existing plugins change. Version 0.1.1 adds
+an explicit authentication bridge to the separate management frontend's plugin
+iframe page; an updated `management.html` enables automatic login.
 The plugin uses the existing C ABI, after-auth interceptor, management routes,
 `host.auth.list/get` and `host.http.do` callbacks.
 
@@ -24,6 +26,13 @@ The plugin uses the existing C ABI, after-auth interceptor, management routes,
 - Playwright with mocked management endpoints: invalid/valid login, default and
   per-account modes, save, search, refresh, logout, desktop and narrow layout.
   Browsers close at the end; no frontend dev server is started.
+- Version 0.1.1 authentication checks use the real compiled management frontend
+  with mocked APIs, plus its actual bridge module: login without remembering a
+  password, automatic panel entry, parent logout, stale response rejection,
+  manual logout and replay rejection, legacy host fallback, unauthorized response
+  revocation (including HTML 403), source/origin/nonce/plugin allowlist checks,
+  navigated-frame rejection, listener disposal and no persisted credentials.
+- Frontend TypeScript/Vite build and ESLint on both changed TypeScript files.
 - Root `go build -buildvcs=false -o test-output ./cmd/server` succeeds. VCS stamping
   was disabled because the sandbox user differs from the repository owner.
 
@@ -40,3 +49,16 @@ hooks. Details and rollback instructions are in `README_CN.md` / `README.md`.
 
 The main repository's memory index excludes `examples/`. The plugin is indexed
 separately; source reads, unit tests and real-host tests remain the source of truth.
+
+## Authentication Regression Commands
+
+After building the management frontend, run from the backend repository:
+
+```sh
+node examples/plugin/codex-timezone/browser-auth-smoke.mjs <playwright/index.mjs> <frontend-root> <screenshot-output-dir>
+node examples/plugin/codex-timezone/browser-smoke.mjs <playwright/index.mjs> <screenshot-output-dir>
+```
+
+Automatic login is restricted to the trusted same-origin `codex-timezone` panel.
+It intentionally does not send credentials to arbitrary third-party plugins.
+Standalone tabs and old frontend builds still require manual authentication.

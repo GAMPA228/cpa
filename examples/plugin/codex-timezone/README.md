@@ -1,7 +1,7 @@
 # Codex Request Timezone Plugin
 
 Standalone C ABI plugin (`codex-timezone`, ABI 1, RPC schema 6). No CPA server
-source changes or management frontend rebuild are required. The plugin provides
+source changes are required. The plugin provides
 its own **Request Timezone** resource menu. It starts disabled and preserves
 requests until explicitly enabled in its settings page.
 
@@ -13,9 +13,16 @@ provided SHA-256 checksum, then place the `.so` in the configured plugin directo
 by copying a file, restart CPA to discover it; do not replace a loaded library in
 place. Existing plugin entries and configuration must be preserved.
 
-Open the plugin's menu and enter the **management key**, not a downstream API key.
-The key stays in page memory, is sent only in authenticated management API headers,
-and is not saved or placed in URLs. Static HTML is public; account information and
+Version 0.1.1 supports automatic login from the updated management frontend.
+Deploy the accompanying `management.html` to use it; the host binary and YAML do
+not change. The trusted same-origin iframe exchanges a nonce-bound handshake with
+its parent. Both sides check the origin and source window; the parent also checks
+the exact panel URL and an explicit plugin allowlist. No other plugin receives keys.
+Older management pages and standalone tabs retain the **management key** input.
+The plugin keeps the key in page memory, sends it only to authenticated management
+API routes, and never saves it or puts it in URLs. Parent logout, page exit and
+401/403 responses clear the session. Stale responses cannot restore a logged-out
+session. Static HTML is public; account information and
 all mutations are protected by the host's management authentication.
 
 Settings are stored at `plugins/data/codex-timezone.json` relative to CPA's working
