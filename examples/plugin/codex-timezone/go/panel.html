@@ -352,7 +352,11 @@
       let token = "",
         snapshot = null,
         busy = false,
-        timer = null;
+        timer = null,
+        authEpoch = 0,
+        pendingNonce = "",
+        bridgeTimer = null,
+        bridgeFallback = null;
       const zones = [
         "UTC",
         "Asia/Shanghai",
@@ -376,6 +380,7 @@
         $("notice").className = error ? "error" : "";
       }
       async function request(path, method = "GET", data) {
+        const epoch = authEpoch;
         const response = await fetch(api + path, {
           method,
           headers: {
@@ -386,15 +391,20 @@
           cache: "no-store",
           credentials: "omit",
         });
+        if (epoch !== authEpoch) throw new Error("登录状态已变化，请重新连接");
+        if (response.status === 401 || response.status === 403) {
+          disconnect();
+          $("login-error").textContent = "管理密钥无效或无访问权限";
+          throw new Error("管理密钥无效或无访问权限");
+        }
         let result;
         try {
           result = await response.json();
         } catch {
           throw new Error("服务器返回了无效响应");
         }
+        if (epoch !== authEpoch) throw new Error("登录状态已变化，请重新连接");
         if (!response.ok) {
-          if (response.status === 401 || response.status === 403)
-            throw new Error("管理密钥无效或无访问权限");
           throw new Error(result.error || "操作失败：HTTP " + response.status);
         }
         return result;
@@ -528,7 +538,7 @@
         };
       }
       async function poll() {
-        if (!token || busy) return;
+        if (!token || !snapshot || busy) return;
         try {
           const data = await request("/settings");
           status(data);
@@ -563,20 +573,92 @@
           $("save").disabled = $("refresh").disabled = false;
         }
       }
-      $("login").onsubmit = async (event) => {
-        event.preventDefault();
-        token = $("key").value.trim();
+      function stopHandshake() {
+        clearInterval(bridgeTimer);
+        clearTimeout(bridgeFallback);
+        pendingNonce = "";
+      }
+      function disconnect() {
+        authEpoch++;
+        stopHandshake();
+        clearInterval(timer);
+        token = "";
+        snapshot = null;
+        $("key").value = "";
+        $("app").hidden = true;
+        $("login").hidden = false;
+        $("rows").replaceChildren();
+        message("");
+      }
+      async function connect(key, automatic = false) {
+        disconnect();
+        if (automatic) $("login").hidden = true;
+        const epoch = authEpoch;
+        token = key;
         $("login-error").textContent = "";
         try {
-          render(await request("/settings"));
-          $("key").value = "";
+          const data = await request("/settings");
+          if (epoch !== authEpoch) return;
+          render(data);
           $("login").hidden = true;
           $("app").hidden = false;
           timer = setInterval(poll, 3000);
         } catch (error) {
-          token = "";
+          if (epoch !== authEpoch) return;
+          disconnect();
           $("login-error").textContent = error.message;
         }
+      }
+      function requestHostSession() {
+        if (window.parent === window || location.origin === "null") return;
+        $("login").hidden = true;
+        pendingNonce = Array.from(
+          crypto.getRandomValues(new Uint8Array(16)),
+          (byte) => byte.toString(16).padStart(2, "0"),
+        ).join("");
+        const ask = () =>
+          window.parent.postMessage(
+            {
+              type: "cpa.plugin.auth.request",
+              version: 1,
+              pluginId: "codex-timezone",
+              nonce: pendingNonce,
+            },
+            location.origin,
+          );
+        bridgeTimer = setInterval(ask, 250);
+        bridgeFallback = setTimeout(() => {
+          clearInterval(bridgeTimer);
+          $("login").hidden = false;
+        }, 1500);
+        ask();
+      }
+      window.addEventListener("message", (event) => {
+        const data = event.data;
+        if (
+          window.parent === window ||
+          event.source !== window.parent ||
+          event.origin !== location.origin ||
+          !data ||
+          data.version !== 1 ||
+          data.pluginId !== "codex-timezone"
+        )
+          return;
+        if (data.type === "cpa.plugin.auth.revoked") {
+          disconnect();
+        } else if (
+          data.type === "cpa.plugin.auth.session" &&
+          pendingNonce &&
+          data.nonce === pendingNonce &&
+          typeof data.managementKey === "string" &&
+          data.managementKey.trim()
+        ) {
+          void connect(data.managementKey.trim(), true);
+        }
+      });
+      $("login").onsubmit = (event) => {
+        event.preventDefault();
+        void connect($("key").value.trim());
       };
       $("default-mode").onchange = () => {
         $("default-zone").hidden = $("default-mode").value !== "manual";
@@ -593,18 +675,12 @@
           message("已提交出口刷新");
           await poll();
         });
-      $("logout").onclick = () => {
-        clearInterval(timer);
-        token = "";
-        snapshot = null;
-        $("app").hidden = true;
-        $("login").hidden = false;
-        $("rows").replaceChildren();
-      };
-      window.addEventListener("pagehide", () => {
-        clearInterval(timer);
-        token = "";
+      $("logout").onclick = disconnect;
+      window.addEventListener("pagehide", disconnect);
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) requestHostSession();
       });
+      requestHostSession();
     </script>
   </body>
 </html>
