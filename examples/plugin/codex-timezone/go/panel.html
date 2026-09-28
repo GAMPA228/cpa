@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>请求时区</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f8fa;
+        --surface: #fff;
+        --text: #22272e;
+        --muted: #67717e;
+        --line: #dde2e8;
+        --accent: #14756d;
+        --soft: #e4f3ef;
+        --danger: #bd3535;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.5 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        letter-spacing: 0;
+      }
+      main {
+        max-width: 1220px;
+        margin: auto;
+        padding: 24px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 18px;
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0;
+        font-weight: 650;
+      }
+      h2 {
+        font-size: 15px;
+        margin: 0;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+        color: inherit;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        min-height: 36px;
+        padding: 6px 10px;
+        max-width: 100%;
+      }
+      button {
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      .primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: white;
+      }
+      input:focus,
+      select:focus,
+      button:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+      input[type="checkbox"] {
+        accent-color: var(--accent);
+        width: 18px;
+        height: 18px;
+        min-height: 0;
+        cursor: pointer;
+      }
+      .toolbar,
+      .field,
+      .commands {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .settings {
+        display: flex;
+        gap: 28px;
+        flex-wrap: wrap;
+        padding: 22px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .settings label {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .zone {
+        width: 195px;
+      }
+      .section-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+        padding: 22px 0 12px;
+        flex-wrap: wrap;
+      }
+      #search {
+        width: 250px;
+      }
+      .table-wrap {
+        overflow: auto;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: var(--surface);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        text-align: left;
+        min-width: 960px;
+        table-layout: fixed;
+      }
+      th {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--muted);
+        background: var(--bg);
+      }
+      th,
+      td {
+        padding: 13px 12px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: middle;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      td select {
+        width: 100%;
+        margin-bottom: 5px;
+      }
+      .name {
+        font-weight: 550;
+        overflow-wrap: anywhere;
+      }
+      .sub {
+        font-size: 12px;
+        color: var(--muted);
+        overflow-wrap: anywhere;
+      }
+      .tag {
+        display: inline-block;
+        font-size: 12px;
+        line-height: 24px;
+        border: 1px solid #8bc5b1;
+        border-radius: 5px;
+        background: var(--soft);
+        color: var(--accent);
+        padding: 0 7px;
+      }
+      .error {
+        color: var(--danger);
+      }
+      #notice {
+        min-height: 24px;
+        margin: 12px 0;
+        overflow-wrap: anywhere;
+      }
+      #empty {
+        padding: 40px;
+        text-align: center;
+        color: var(--muted);
+      }
+      #login {
+        max-width: 420px;
+        margin: 12vh auto;
+        padding: 24px;
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      #login h1 {
+        margin-bottom: 22px;
+      }
+      #login label {
+        display: block;
+        margin-bottom: 6px;
+      }
+      #login input {
+        width: 100%;
+        margin-bottom: 18px;
+      }
+      #login button {
+        width: 100%;
+      }
+      #login-error {
+        color: var(--danger);
+        margin-top: 12px;
+      }
+      footer {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 14px;
+      }
+      [hidden] {
+        display: none !important;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #181a1e;
+          --surface: #202328;
+          --text: #e9ebee;
+          --muted: #a3adb8;
+          --line: #383e46;
+          --accent: #70c7b9;
+          --soft: #233e37;
+          --danger: #ff9393;
+        }
+        .primary {
+          color: #102720;
+        }
+        .tag {
+          border-color: #426f60;
+        }
+      }
+      @media (max-width: 600px) {
+        main {
+          padding: 16px;
+        }
+        .settings {
+          gap: 16px;
+        }
+        .commands {
+          width: 100%;
+        }
+        .section-head input {
+          width: 100%;
+        }
+        #login {
+          margin: 10vh 16px;
+        }
+        .zone {
+          width: 175px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <form id="login">
+      <h1>请求时区</h1>
+      <label for="key">管理密钥</label
+      ><input id="key" type="password" autocomplete="off" required /><button
+        class="primary"
+        type="submit"
+      >
+        连接
+      </button>
+      <div id="login-error" role="alert"></div>
+    </form>
+    <main id="app" hidden>
+      <header>
+        <div>
+          <h1>请求时区</h1>
+          <span class="sub" id="version"></span>
+        </div>
+        <div class="commands">
+          <button id="refresh" type="button">刷新出口</button
+          ><button id="save" class="primary" type="button">保存设置</button
+          ><button id="logout" type="button">退出</button>
+        </div>
+      </header>
+      <section class="settings">
+        <label><input id="enabled" type="checkbox" />启用时区改写</label>
+        <div class="field">
+          <label for="default-mode">默认策略</label
+          ><select id="default-mode">
+            <option value="keep">保持原样</option>
+            <option value="manual">指定时区</option>
+            <option value="auto">按出口 IP</option></select
+          ><input
+            id="default-zone"
+            class="zone"
+            list="zones"
+            aria-label="默认时区"
+            value="Asia/Singapore"
+            hidden
+          />
+        </div>
+      </section>
+      <div id="notice" role="status" aria-live="polite"></div>
+      <section>
+        <div class="section-head">
+          <h2>账号规则 <span class="sub" id="count"></span></h2>
+          <input
+            id="search"
+            type="search"
+            aria-label="搜索账号"
+            placeholder="搜索账号或邮箱"
+          />
+        </div>
+        <div class="table-wrap">
+          <table>
+            <colgroup>
+              <col style="width: 24%" />
+              <col style="width: 23%" />
+              <col style="width: 12%" />
+              <col style="width: 23%" />
+              <col style="width: 18%" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>认证账号</th>
+                <th>时区策略</th>
+                <th>出口来源</th>
+                <th>出口 IP / 识别时区</th>
+                <th>最近识别</th>
+              </tr>
+            </thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div id="empty" hidden>暂无 Codex 账号</div>
+        </div>
+      </section>
+      <footer><span id="activity"></span></footer>
+    </main>
+    <datalist id="zones"></datalist>
+    <script>
+      "use strict";
+      const api = "/v0/management/plugins/codex-timezone",
+        $ = (id) => document.getElementById(id);
+      let token = "",
+        snapshot = null,
+        busy = false,
+        timer = null;
+      const zones = [
+        "UTC",
+        "Asia/Shanghai",
+        "Asia/Singapore",
+        ...(typeof Intl.supportedValuesOf === "function"
+          ? Intl.supportedValuesOf("timeZone")
+          : [
+              "Asia/Tokyo",
+              "America/New_York",
+              "America/Los_Angeles",
+              "Europe/London",
+            ]),
+      ];
+      for (const value of [...new Set(zones)].sort()) {
+        const option = document.createElement("option");
+        option.value = value;
+        $("zones").append(option);
+      }
+      function message(text, error = false) {
+        $("notice").textContent = text;
+        $("notice").className = error ? "error" : "";
+      }
+      async function request(path, method = "GET", data) {
+        const response = await fetch(api + path, {
+          method,
+          headers: {
+            Authorization: "Bearer " + token,
+            "Content-Type": "application/json",
+          },
+          body: data === undefined ? undefined : JSON.stringify(data),
+          cache: "no-store",
+          credentials: "omit",
+        });
+        let result;
+        try {
+          result = await response.json();
+        } catch {
+          throw new Error("服务器返回了无效响应");
+        }
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403)
+            throw new Error("管理密钥无效或无访问权限");
+          throw new Error(result.error || "操作失败：HTTP " + response.status);
+        }
+        return result;
+      }
+      function node(tag, text, cls) {
+        const el = document.createElement(tag);
+        if (text !== undefined) el.textContent = text;
+        if (cls) el.className = cls;
+        return el;
+      }
+      function fillStatus(tr, account) {
+        const cells = tr.cells,
+          o = account.observation || {};
+        cells[2].textContent =
+          { global: "全局 / 默认", account: "账号代理", direct: "直连" }[
+            account.route
+          ] || "未识别";
+        cells[3].replaceChildren(
+          node("div", o.ip || "未识别"),
+          node("div", o.timezone || "", o.timezone ? "tag" : "sub"),
+        );
+        const error = account.error || o.error;
+        if (error) cells[3].append(node("div", error, "sub error"));
+        cells[4].replaceChildren(
+          node(
+            "div",
+            o.updated_at && !o.updated_at.startsWith("0001")
+              ? new Date(o.updated_at).toLocaleString()
+              : "--",
+            "sub",
+          ),
+        );
+        if (error && o.timezone)
+          cells[4].append(node("div", "保留上次结果", "sub"));
+      }
+      function render(data) {
+        snapshot = data;
+        $("enabled").checked = data.settings.enabled;
+        $("default-mode").value = data.settings.default.mode;
+        $("default-zone").value =
+          data.settings.default.timezone || "Asia/Singapore";
+        $("default-zone").hidden = $("default-mode").value !== "manual";
+        $("version").textContent = "v" + data.version;
+        $("count").textContent = "(" + data.accounts.length + ")";
+        $("rows").replaceChildren();
+        for (const account of data.accounts) {
+          const tr = document.createElement("tr");
+          tr.dataset.id = account.id;
+          tr.dataset.search = (
+            account.name +
+            " " +
+            account.label
+          ).toLowerCase();
+          const name = node("td");
+          name.append(node("div", account.label || account.name, "name"));
+          if (account.label) name.append(node("div", account.name, "sub"));
+          const control = node("td"),
+            mode = document.createElement("select");
+          mode.setAttribute(
+            "aria-label",
+            (account.label || account.name) + " 时区策略",
+          );
+          for (const [value, text] of [
+            ["inherit", "继承默认"],
+            ["keep", "保持原样"],
+            ["manual", "指定时区"],
+            ["auto", "按出口 IP"],
+          ]) {
+            const option = node("option", text);
+            option.value = value;
+            mode.append(option);
+          }
+          const rule = data.settings.accounts?.[account.id] || {
+            mode: "inherit",
+          };
+          mode.value = rule.mode;
+          const zone = document.createElement("input");
+          zone.className = "zone";
+          zone.setAttribute("list", "zones");
+          zone.setAttribute(
+            "aria-label",
+            (account.label || account.name) + " 指定时区",
+          );
+          zone.value = rule.timezone || "Asia/Singapore";
+          zone.hidden = mode.value !== "manual";
+          mode.onchange = () => {
+            zone.hidden = mode.value !== "manual";
+          };
+          control.append(mode, zone);
+          tr.append(name, control, node("td"), node("td"), node("td"));
+          fillStatus(tr, account);
+          $("rows").append(tr);
+        }
+        $("empty").hidden = data.accounts.length > 0;
+        filter();
+        status(data);
+      }
+      function status(data) {
+        $("activity").textContent = data.refreshing
+          ? "正在识别出口…"
+          : "已连接";
+        if (data.error) message(data.error, true);
+      }
+      function filter() {
+        const term = $("search").value.toLowerCase();
+        for (const tr of $("rows").rows)
+          tr.hidden = !tr.dataset.search.includes(term);
+      }
+      function readSettings() {
+        const accounts = { ...(snapshot.settings.accounts || {}) };
+        for (const tr of $("rows").rows) {
+          const mode = tr.querySelector("select").value,
+            timezone = tr.querySelector("input").value.trim();
+          if (mode === "inherit") delete accounts[tr.dataset.id];
+          else
+            accounts[tr.dataset.id] = {
+              mode,
+              timezone: mode === "manual" ? timezone : "",
+            };
+        }
+        return {
+          enabled: $("enabled").checked,
+          default: {
+            mode: $("default-mode").value,
+            timezone:
+              $("default-mode").value === "manual"
+                ? $("default-zone").value.trim()
+                : "",
+          },
+          accounts,
+        };
+      }
+      async function poll() {
+        if (!token || busy) return;
+        try {
+          const data = await request("/settings");
+          status(data);
+          const changed =
+            data.accounts.length !== snapshot.accounts.length ||
+            data.accounts.some(
+              (a) => !snapshot.accounts.some((old) => old.id === a.id),
+            );
+          if (changed) {
+            data.settings = readSettings();
+            render(data);
+          } else {
+            for (const tr of $("rows").rows) {
+              const a = data.accounts.find((a) => a.id === tr.dataset.id);
+              if (a) fillStatus(tr, a);
+            }
+          }
+        } catch (error) {
+          message(error.message, true);
+        }
+      }
+      async function action(fn) {
+        if (busy) return;
+        busy = true;
+        $("save").disabled = $("refresh").disabled = true;
+        try {
+          await fn();
+        } catch (error) {
+          message(error.message, true);
+        } finally {
+          busy = false;
+          $("save").disabled = $("refresh").disabled = false;
+        }
+      }
+      $("login").onsubmit = async (event) => {
+        event.preventDefault();
+        token = $("key").value.trim();
+        $("login-error").textContent = "";
+        try {
+          render(await request("/settings"));
+          $("key").value = "";
+          $("login").hidden = true;
+          $("app").hidden = false;
+          timer = setInterval(poll, 3000);
+        } catch (error) {
+          token = "";
+          $("login-error").textContent = error.message;
+        }
+      };
+      $("default-mode").onchange = () => {
+        $("default-zone").hidden = $("default-mode").value !== "manual";
+      };
+      $("search").oninput = filter;
+      $("save").onclick = () =>
+        action(async () => {
+          render(await request("/settings", "PUT", readSettings()));
+          message("设置已保存");
+        });
+      $("refresh").onclick = () =>
+        action(async () => {
+          await request("/refresh", "POST", {});
+          message("已提交出口刷新");
+          await poll();
+        });
+      $("logout").onclick = () => {
+        clearInterval(timer);
+        token = "";
+        snapshot = null;
+        $("app").hidden = true;
+        $("login").hidden = false;
+        $("rows").replaceChildren();
+      };
+      window.addEventListener("pagehide", () => {
+        clearInterval(timer);
+        token = "";
+      });
+    </script>
+  </body>
+</html>
