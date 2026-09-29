@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -16,6 +18,61 @@ import (
 	sdkconfig "github.com/router-for-me/CLIProxyAPI/v7/sdk/config"
 	"github.com/tidwall/gjson"
 )
+
+func TestExecuteImageWithAuthManagerPreservesMultipartModelRewrite(t *testing.T) {
+	for _, field := range []string{"image", "image[]"} {
+		for _, apiKey := range []string{"sk-user", "sk-whitelist"} {
+			t.Run(field+"/"+apiKey, func(t *testing.T) {
+				const sourceModel = "gpt-image-2"
+				const targetModel = "gpt-image-2.5-sunburst"
+				wantModel := targetModel
+				if apiKey == "sk-whitelist" {
+					wantModel = sourceModel
+				}
+				executor := &modelExecutionCaptureExecutor{}
+				cfg := modelRewriteTestConfig(sourceModel, targetModel)
+				handler := newModelExecutionHandler(t, wantModel, executor, cfg)
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				for key, value := range map[string]string{"model": sourceModel, "prompt": "Edit this image", "size": "1024x1024", "n": "1"} {
+					if err := writer.WriteField(key, value); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for _, name := range []string{field, field, "mask"} {
+					part, err := writer.CreateFormFile(name, "test.png")
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err = part.Write([]byte("\x89PNG\x00test-image")); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatal(err)
+				}
+				ctx := modelRewriteContextWithAPIKey(t, apiKey)
+				ginCtx := ctx.Value("gin").(*gin.Context)
+				ginCtx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+				ginCtx.Request.Header.Set("Content-Type", writer.FormDataContentType())
+				_, _, errMsg := handler.ExecuteImageWithAuthManager(ctx, "openai-image", sourceModel, body.Bytes(), "")
+				if errMsg != nil {
+					t.Fatalf("image execution error: %+v", errMsg)
+				}
+				req, opts := executor.captured()
+				if req.Model != wantModel {
+					t.Fatalf("model = %q, want %q", req.Model, wantModel)
+				}
+				if !bytes.Equal(req.Payload, body.Bytes()) || !bytes.Equal(opts.OriginalRequest, body.Bytes()) {
+					t.Fatal("multipart upload was modified before reaching the image executor")
+				}
+				if opts.Headers.Get("Content-Type") != writer.FormDataContentType() {
+					t.Fatal("multipart boundary was not preserved")
+				}
+			})
+		}
+	}
+}
 
 func TestExecuteWithAuthManagerRewritesOpenAIModelForNonWhitelistedAPIKey(t *testing.T) {
 	sourceModel := "gpt-5.5"

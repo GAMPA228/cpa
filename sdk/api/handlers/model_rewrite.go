@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,11 @@ func (h *BaseAPIHandler) applyModelRewrite(ctx context.Context, handlerType, mod
 	}
 	rewriteModel := rewriteResult.Model
 	if len(rawJSON) == 0 {
+		return rewriteModel, rawJSON
+	}
+	// Image executors apply the routed model when serializing multipart uploads.
+	// sjson accepts non-JSON input and would silently discard all uploaded files.
+	if !json.Valid(rawJSON) {
 		return rewriteModel, rawJSON
 	}
 	rewrittenJSON, err := sjson.SetBytes(rawJSON, "model", rewriteModel)
